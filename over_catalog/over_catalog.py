@@ -4,7 +4,7 @@ Main plugin class. Registers the Browser tree provider (layer 2), the
 Locator search filter (layer 3), and the settings dialog entry (layer 4).
 """
 
-from qgis.core import QgsApplication
+from qgis.core import QgsApplication, Qgis, QgsMessageLog
 from qgis.gui import QgsGui
 
 # QAction moved from QtWidgets (Qt5) to QtGui (Qt6); QGIS ships both bindings.
@@ -76,8 +76,10 @@ class OverCatalogPlugin:
                 reg.removeProvider(self.data_provider)
             self.data_provider = OverDataItemProvider()
             reg.addProvider(self.data_provider)
-        except Exception:
-            pass
+        except Exception as exc:
+            QgsMessageLog.logMessage(
+                f"OVER: tree refresh failed: {exc}", "OVER",
+                Qgis.MessageLevel.Warning)
 
     def unload(self):
         if self.locator_filter is not None:

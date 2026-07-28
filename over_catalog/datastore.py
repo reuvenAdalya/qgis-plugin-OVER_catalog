@@ -182,8 +182,14 @@ def build_sql(table, schema=None, bbox=None, where=None,
     All PostGIS calls are `extensions.`-qualified (see PG) — the endpoint's
     search_path does not include the extensions schema.
     """
+    # Bandit B608: this builds SQL by string formatting, but safely — table
+    # and schema identifiers are quoted (_quote_ident), bbox values are
+    # float-coerced and limit/offset int-coerced. `where` is a deliberate
+    # user-supplied read-only SQL filter (the "advanced query" feature),
+    # executed against the read-only datastore_search_sql endpoint which takes
+    # a full SQL string and cannot be parameterized.
     tbl = _qualified_table(table, schema)
-    select = (f'SELECT *, {PG}.ST_AsGeoJSON({GEOM_COL}) AS {GEOJSON_ALIAS} '
+    select = (f'SELECT *, {PG}.ST_AsGeoJSON({GEOM_COL}) AS {GEOJSON_ALIAS} '  # nosec B608
               f'FROM {tbl}')
 
     clauses = []

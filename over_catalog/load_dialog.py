@@ -15,6 +15,7 @@ from qgis.PyQt.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QDialogButtonBox,
 )
 from qgis.PyQt.QtGui import QFontDatabase
+from qgis.core import Qgis, QgsMessageLog
 
 
 def _mono(widget):
@@ -22,8 +23,10 @@ def _mono(widget):
     try:
         widget.setFont(
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-    except Exception:
-        pass
+    except Exception as exc:  # cosmetic only — log and keep the default font
+        QgsMessageLog.logMessage(
+            f"OVER: monospace font unavailable: {exc}", "OVER",
+            Qgis.MessageLevel.Info)
 
 # Geometry / helper columns that make no sense in a WHERE field picker.
 _HIDDEN_COLUMNS = {"geom", "geometry_wkt"}
