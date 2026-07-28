@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # OVER Catalog — a QGIS plugin for the גרסאות לעם (over.org.il) catalog.
-# Copyright (C) 2026 Reuven Kost
+# Copyright (C) 2026 Reuven Kost, Guy Zomer
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the Free
