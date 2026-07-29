@@ -69,6 +69,15 @@ use of the internal endpoints was confirmed as permitted by the over.org.il
 maintainer. All network requests go through `QgsNetworkAccessManager` (QGIS
 proxy settings are respected). Data is loaded read-only.
 
+## Credits / based on
+
+OVER Catalog is a QGIS client for the **גרסאות לעם** service
+([over.org.il](https://www.over.org.il/)), which is powered by the open-source
+**ckan-version-tracker** project by Guy Zomer:
+<https://github.com/zomer-g/ckan-version-tracker> (MIT). This plugin is a
+separate project that consumes that service's public API — it is not a fork of
+ckan-version-tracker.
+
 ## Authors
 
 Reuven Kost, Guy Zomer.
