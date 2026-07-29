@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- The "current view" datastore item in the Browser now shows the correct
+  geometry-type icon (point / line / polygon) instead of always a point. The
+  geometry type is sampled once per dataset (one small query) and cached.
+
 ## 1.0.1
 
 - Resolve QGIS plugin-repository Bandit security-scan findings: annotate the

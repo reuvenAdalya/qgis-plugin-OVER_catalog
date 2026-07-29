@@ -143,6 +143,21 @@ def _layer_type(kind):
     return Qgis.BrowserLayerType.TableLayer   # NoGeometry attribute table
 
 
+def _geom_icon(geom_type):
+    """QGIS theme icon matching the real geometry type (point/line/polygon);
+    a generic geometry icon when the type is unknown."""
+    t = (geom_type or "").upper()
+    if "POINT" in t:
+        name = "/mIconPointLayer.svg"
+    elif "LINE" in t or "CURVE" in t:
+        name = "/mIconLineLayer.svg"
+    elif "POLYGON" in t or "SURFACE" in t:
+        name = "/mIconPolygonLayer.svg"
+    else:
+        name = "/mIconGeometryCollectionLayer.svg"
+    return QgsApplication.getThemeIcon(name)
+
+
 # --------------------------------------------------------------------------
 # Root
 # --------------------------------------------------------------------------
@@ -257,7 +272,15 @@ class DatasetItem(QgsDataCollectionItem):
 
         # Route B leaf first: for spatial datasets this is the default load.
         if self.rec.get("is_spatial") and self.rec.get("spatial_table"):
-            children.append(DatastoreLayerItem(self, self.rec))
+            # Learn the real geometry type once (datastore columns are generic
+            # `geometry`), cache it on the record, and use it for the leaf icon.
+            if "spatial_geom_type" not in self.rec:
+                self.rec["spatial_geom_type"] = datastore.geometry_type(
+                    self.dataset_id, self.rec["spatial_table"],
+                    schema=self.rec.get("spatial_schema"),
+                    source_type=self.rec.get("source_type"))
+            children.append(DatastoreLayerItem(
+                self, self.rec, self.rec.get("spatial_geom_type")))
 
         # Route A: file resources from the latest version (+ history node).
         try:
@@ -325,7 +348,7 @@ class DatastoreLayerItem(QgsDataItem):
     # a browser-held item and the freshly-imported class differ by module).
     OVER_ROUTE_B = True
 
-    def __init__(self, parent, rec):
+    def __init__(self, parent, rec, geom_type=None):
         title = rec.get("title") or rec["dataset_id"]
         name = f"🗺 {title} — תצוגה נוכחית"
         path = parent.path() + "/datastore"
@@ -333,7 +356,7 @@ class DatastoreLayerItem(QgsDataItem):
                          PROVIDER_KEY)
         # Leaf: no children, so the browser shows no (pointless) expand arrow.
         self.setState(Qgis.BrowserItemState.Populated)
-        self.setIcon(QgsApplication.getThemeIcon("/mIconPointLayer.svg"))
+        self.setIcon(_geom_icon(geom_type))
         self.dataset_id = rec["dataset_id"]
         self.spatial_table = rec["spatial_table"]
         self.spatial_schema = rec.get("spatial_schema")

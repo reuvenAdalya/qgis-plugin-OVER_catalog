@@ -437,6 +437,28 @@ def load_free_query(sql, name):
     return layer, truncated
 
 
+def geometry_type(dataset_id, table, schema=None, source_type=None,
+                  gateway_id=None):
+    """
+    Return the table's real geometry type (e.g. 'MULTIPOLYGON', 'POINT') by
+    sampling one non-null row, or None on failure. The datastore columns are
+    declared as generic `geometry`, so this is the cheap way to learn the
+    actual shape for the tree icon — one small LIMIT 1 query.
+    """
+    tbl = _qualified_table(table, schema)
+    sql = (f'SELECT {PG}.GeometryType({GEOM_COL}) AS t '  # nosec B608
+           f'FROM {tbl} WHERE {GEOM_COL} IS NOT NULL LIMIT 1')
+    try:
+        result = run_sql(dataset_id, sql, gateway_id=gateway_id,
+                         source_type=source_type)
+    except api.OverApiError:
+        return None
+    records = result.get("records") if isinstance(result, dict) else result
+    if records:
+        return records[0].get("t")
+    return None
+
+
 def canvas_bbox_4326(iface):
     """Current map extent as (xmin,ymin,xmax,ymax) in EPSG:4326."""
     canvas = iface.mapCanvas()
