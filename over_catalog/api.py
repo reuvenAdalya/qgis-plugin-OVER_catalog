@@ -43,6 +43,24 @@ class OverApiError(Exception):
         self.status = status
 
 
+def _follow_redirects(req):
+    """
+    Qt6 removed QNetworkRequest.Attribute.FollowRedirectsAttribute (the bool
+    flag used on Qt5); redirects are now opted into via RedirectPolicyAttribute
+    with a QNetworkRequest.RedirectPolicy value. NoLessSafeRedirectPolicy
+    matches the old FollowRedirectsAttribute behaviour (follow same-or-safer
+    redirects, e.g. https -> https on another host, which is what over.org.il
+    -> Cloudflare R2 needs) and is also Qt6's default, so this is only
+    necessary for the Qt5 builds where the default is still "don't follow".
+    """
+    try:
+        req.setAttribute(QNetworkRequest.Attribute.FollowRedirectsAttribute, True)
+    except AttributeError:
+        req.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy)
+
+
 def fetch_json(url, timeout_ms=30000):
     """
     Blocking GET that returns decoded JSON.
@@ -54,7 +72,7 @@ def fetch_json(url, timeout_ms=30000):
     """
     req = QNetworkRequest(QUrl(url))
     req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, USER_AGENT)
-    req.setAttribute(QNetworkRequest.Attribute.FollowRedirectsAttribute, True)
+    _follow_redirects(req)
 
     reply = QgsNetworkAccessManager.instance().get(req)
 

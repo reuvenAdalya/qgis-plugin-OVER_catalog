@@ -22,7 +22,7 @@ from qgis.core import (
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsRectangle, QgsMessageLog, Qgis,
 )
-from qgis.PyQt.QtCore import QUrl, QVariant
+from qgis.PyQt.QtCore import QUrl, QMetaType
 
 from . import api
 from . import catalog_cache
@@ -266,21 +266,43 @@ def _fetch_paged(dataset_id, table, schema=None, bbox=None, where=None,
 # Building the memory layer
 # --------------------------------------------------------------------------
 
+_META_FIELD_TYPES = {
+    bool: QMetaType.Type.Bool,
+    int: QMetaType.Type.LongLong,
+    float: QMetaType.Type.Double,
+}
+
+
+def _qgs_field(key, val):
+    """
+    Build a QgsField for `val`'s Python type.
+
+    QgsField's QVariant.Type constructor is deprecated as of QGIS 3.38 and
+    QVariant.Bool/.LongLong/.Double/.String don't exist under Qt6 (QGIS 4),
+    so QMetaType.Type is used. The QMetaType overload itself only exists on
+    QGIS >= 3.38 though, so 3.34-3.37 builds (this plugin's stated minimum)
+    fall back to the old QVariant.Type constructor.
+    """
+    meta_type = _META_FIELD_TYPES.get(type(val), QMetaType.Type.QString)
+    try:
+        return QgsField(key, meta_type)
+    except TypeError:
+        from qgis.PyQt.QtCore import QVariant
+        variant_types = {
+            bool: QVariant.Bool,
+            int: QVariant.LongLong,
+            float: QVariant.Double,
+        }
+        return QgsField(key, variant_types.get(type(val), QVariant.String))
+
+
 def _fields_from_record(record):
     """Infer QgsFields from one record, skipping the geometry columns."""
     fields = QgsFields()
     for key, val in record.items():
         if key in (GEOM_COL, GEOJSON_ALIAS, "geometry_wkt"):
             continue
-        if isinstance(val, bool):
-            t = QVariant.Bool
-        elif isinstance(val, int):
-            t = QVariant.LongLong
-        elif isinstance(val, float):
-            t = QVariant.Double
-        else:
-            t = QVariant.String
-        fields.append(QgsField(key, t))
+        fields.append(_qgs_field(key, val))
     return fields
 
 

@@ -80,7 +80,7 @@ ckan-version-tracker.
 
 ## Authors
 
-Reuven Kost, Guy Zomer.
+Reuven Kost, Guy Zomer, Shai Sussman.
 
 ## License
 
