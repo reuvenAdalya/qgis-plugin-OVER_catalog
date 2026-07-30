@@ -25,6 +25,14 @@ Loading:
     right-click = choose current-view / whole-layer.
   * Route A (whole file via /vsicurl/) is the file resource leaves and the
     only route for previous versions.
+  * A dataset with a datastore table but no geometry column and no file
+    resources (bare lat/lon or X/Y columns, not real PostGIS geometry — see
+    catalog_cache._table_is_spatial) gets neither a Route A nor a Route B
+    leaf. Its raw table is still reachable via a "load as info table"
+    context-menu action on the dataset node itself (DatasetItem.
+    over_table_fallback / OverDataItemGuiProvider.populateContextMenu) —
+    deliberately not a tree leaf, so it doesn't depend on createChildren's
+    background-thread populate or on a custom QgsDataItem icon rendering.
 """
 
 from qgis.core import (
@@ -231,6 +239,11 @@ class OrganizationItem(QgsDataCollectionItem):
     def createChildren(self):
         # Default: show only spatial datasets (this is a GIS tool). Users can
         # turn this off in the settings dialog to also see tabular datasets.
+        # This is why a non-spatial dataset's DatasetItem.over_table_fallback
+        # context-menu action (see OverDataItemGuiProvider.populateContextMenu)
+        # is unreachable with the default setting — the dataset never becomes
+        # a DatasetItem at all when spatial_only filters it out here, one
+        # level above where that action lives. Deliberate, not a bug.
         spatial_only = QSettings().value(
             SETTINGS_SPATIAL_ONLY, True, type=bool)
         try:
@@ -322,7 +335,27 @@ class DatasetItem(QgsDataCollectionItem):
 
     # The dataset node has no load action of its own — Route A files load by
     # double-clicking their leaves, and Route B (incl. the advanced query) is
-    # on the "תצוגה נוכחית" leaf below.
+    # on the "תצוגה נוכחית" leaf below. The exception is over_table_fallback:
+    # a dataset with no geometry column (bare lat/lon or X/Y coordinate
+    # fields, not real PostGIS geometry — see catalog_cache._table_is_spatial)
+    # has no leaf offering its raw datastore table at all, so that one load
+    # action lives directly on the context menu here instead.
+
+    def over_table_fallback(self):
+        """
+        This dataset's catalog record, if it has a datastore table but no
+        geometry column — used by OverDataItemGuiProvider.populateContextMenu
+        to add a "load as info table" action. None otherwise.
+
+        Deliberately independent of file-resource state (children/
+        createChildren) and of any Custom QgsDataItem leaf: those need a
+        background-thread populate to run and an icon to render, whereas the
+        dataset node itself and its context menu are always there the moment
+        the tree shows it, with no lazy-load or rendering step to fail.
+        """
+        if self.rec.get("is_spatial") or not self.rec.get("primary_table"):
+            return None
+        return self.rec
 
 
 # --------------------------------------------------------------------------
@@ -532,6 +565,52 @@ class OverDataItemGuiProvider(QgsDataItemGuiProvider):
             act.triggered.connect(
                 lambda checked=False, s=label: _open_free_query(s))
             menu.addAction(act)
+
+        # Dataset nodes with a datastore table but no geometry column (see
+        # DatasetItem.over_table_fallback) — a way to load that raw table
+        # that doesn't depend on a lazily-populated tree leaf.
+        table_fallback = getattr(item, "over_table_fallback", None)
+        if callable(table_fallback):
+            rec = table_fallback()
+            if rec:
+                a_load = QAction(
+                    "טען כטבלת מידע (זהו מאגר נתונים בלבד, ללא שכבה מרחבית)",
+                    menu)
+                a_load.triggered.connect(
+                    lambda checked=False, r=rec: _load_table_fallback(r))
+                menu.addAction(a_load)
+
+                a_query = QAction("שאילתה מתקדמת (טבלת מידע)...", menu)
+                a_query.triggered.connect(
+                    lambda checked=False, r=rec: _open_table_fallback_query(r))
+                menu.addAction(a_query)
+
+
+def _load_table_fallback(rec, where=None):
+    """Load a non-spatial dataset's raw datastore table as an attribute-only layer."""
+    title = rec.get("title") or rec["dataset_id"]
+    try:
+        layer, truncated = datastore.load_table(
+            rec["dataset_id"], rec["primary_table"], title,
+            schema=rec.get("primary_schema"), where=where,
+            source_type=rec.get("source_type"),
+        )
+        _notify_loaded(layer, truncated)
+    except datastore.DatastoreError as exc:
+        _notify(str(exc), Qgis.MessageLevel.Warning)
+    except api.OverApiError as exc:
+        _notify(f"שגיאת רשת: {exc}", Qgis.MessageLevel.Critical)
+
+
+def _open_table_fallback_query(rec):
+    """WHERE-only advanced query (no bbox — no geometry column to filter by)."""
+    from .load_dialog import AdvancedQueryDialog
+    from qgis.utils import iface
+    title = rec.get("title") or rec["dataset_id"]
+    dlg = AdvancedQueryDialog(title, columns=rec.get("primary_columns") or [],
+                              parent=iface.mainWindow(), show_bbox=False)
+    if dlg.exec():
+        _load_table_fallback(rec, where=dlg.selection()["where"])
 
 
 def _open_free_query(scope_label):

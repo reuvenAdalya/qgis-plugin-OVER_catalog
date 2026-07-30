@@ -78,6 +78,9 @@ def _build():
                 "spatial_table": None,
                 "spatial_schema": None,
                 "spatial_columns": None,
+                "primary_table": None,
+                "primary_schema": None,
+                "primary_columns": None,
                 "est_rows": 0,
                 "table_count": 0,
                 "versions_url": t.get("versions_url"),
@@ -86,6 +89,15 @@ def _build():
             order.append(ds_id)
         rec["table_count"] += 1
         rec["est_rows"] += int(t.get("est_rows") or 0)
+        # Remember the first table seen for this dataset regardless of
+        # spatiality, so a dataset with only non-spatial datastore tables
+        # (e.g. bare lat/lon or X/Y columns, not a real PostGIS geometry
+        # column) still has something queryable — see
+        # DatasetItem.over_table_fallback in data_items.py.
+        if not rec.get("primary_table"):
+            rec["primary_table"] = t.get("table")
+            rec["primary_schema"] = t.get("schema") or DEFAULT_SPATIAL_SCHEMA
+            rec["primary_columns"] = t.get("columns") or []
         # First ckan dataset seen becomes the Route B gateway (ckan datasets
         # have their own NEON append DB, so their /api/append id is accepted;
         # from there SQL can reach every schema, incl. idx spatial tables).
