@@ -5,7 +5,7 @@ description=Browse and load the גרסאות לעם (OVER / over.org.il) catalog
 description[he]=דפדוף וטעינה של מאגרי פרויקט גרסאות לעם (over.org.il) — שכבות מרחביות, טבלאות ושאילתות חיות — ישירות ל-QGIS.
 about=OVER Catalog browses and loads the "גרסאות לעם" (OVER / over.org.il) version-tracking catalog of Israeli public datasets directly into QGIS: an OVER node in the Browser panel (source type -> organization -> dataset), a global search filter that reveals a dataset in the tree, whole-file GeoJSON/CSV loading, a live datastore layer filtered to the current map view, an advanced WHERE/SQL query builder with a field picker, and access to previous versions.
     "גרסאות לעם" היא מערכת שעוקבת אחרי שינויים במאגרי מידע ממשלתיים וציבוריים בישראל. המערכת החלה במעקב אחרי המאגרים הפתוחים באתר data.gov.il, וכיום היא מנטרת גם מקורות נוספים: מסד הנתונים של הכנסת, אתר הלשכה המרכזית לסטטיסטיקה (הלמ"ס), שכבות המידע המרחבי של GovMap, פרוטוקולי ועדות, מכרזים, החלטות ממשלה ועוד.
-version=1.0.2
+version=1.1.0
 author=Reuven Kost, Guy Zomer
 email=reuvenkost@gmail.com
 tracker=https://github.com/reuvenAdalya/qgis-plugin-OVER_catalog/issues
@@ -16,6 +16,7 @@ category=Web
 icon=icon.png
 experimental=False
 deprecated=False
-changelog=1.0.2 - The "current view" datastore item in the Browser now shows the correct geometry-type icon (point / line / polygon) instead of always a point; the type is sampled once per dataset and cached.
+changelog=1.1.0 - Catalog now also includes file-only datasets (no datastore table) from /api/v1 — the heavy layers (100k+ rows, often GPKG) that lack an idx table. Route A now loads GPKG/KML/GML (not just GeoJSON) with the correct GDAL driver. New "show all files" setting lists non-openable resources (symbology zip, PDF, XML...) as download/open-in-browser links.
+    1.0.2 - The "current view" datastore item in the Browser now shows the correct geometry-type icon (point / line / polygon) instead of always a point; the type is sampled once per dataset and cached.
     1.0.1 - Resolve Bandit security scan findings: annotate the safe (read-only, quoted-identifier) SQL construction, and log instead of silently passing in two exception handlers. No functional change.
     1.0.0 - First public release: Browser tree (source type / organization / dataset), Locator reveal, GeoJSON/CSV loading, live "current view" datastore layer, advanced WHERE and full-SQL query, previous versions, spatial-only default filter and settings.

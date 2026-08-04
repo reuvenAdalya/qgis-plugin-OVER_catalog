@@ -25,7 +25,16 @@ import time
 
 from . import api
 
-TABLES_URL = f"https://www.over.org.il/api/tables"
+TABLES_URL = "https://www.over.org.il/api/tables"
+DATASETS_URL = "https://www.over.org.il/api/v1/datasets"
+
+# For file-only datasets (no datastore table), spatiality is inferred cheaply
+# from the /api/v1 list — no per-dataset /versions fetch: a scraped source
+# (govmap/scraper) is treated as spatial (this is where the heavy 100k+ row
+# layers without an idx table live), and a ckan dataset is spatial when the
+# source offers a spatial-format resource.
+_SPATIAL_SOURCE_TYPES = {"govmap", "scraper"}
+_SPATIAL_SOURCE_FORMATS = {"geojson", "kml", "kmz", "gpkg", "gml", "zip", "shp"}
 
 # {"ts": epoch, "datasets": {dataset_id: {...}}, "order": [...], "gateway": id}
 _CACHE = {"ts": 0.0, "datasets": None, "order": None, "gateway": None}
@@ -48,6 +57,34 @@ def _table_is_spatial(table_row):
     """True if any column is of type 'geometry'."""
     for col in table_row.get("columns", []) or []:
         if (col.get("type") or "").lower() == "geometry":
+            return True
+    return False
+
+
+def _fetch_all_datasets():
+    """Every dataset from /api/v1/datasets (paged). Used to add file-only
+    datasets (no datastore table) to the catalog."""
+    out = []
+    offset = 0
+    while True:
+        payload = api.fetch_json(f"{DATASETS_URL}?limit=500&offset={offset}")
+        items = (payload.get("items") if isinstance(payload, dict)
+                 else payload) or []
+        if not items:
+            break
+        out.extend(items)
+        if len(items) < 500:
+            break
+        offset += 500
+    return out
+
+
+def _file_only_is_spatial(item):
+    """Cheap spatiality guess for a file-only dataset (see the constants)."""
+    if item.get("source_type") in _SPATIAL_SOURCE_TYPES:
+        return True
+    for res in item.get("new_resources_at_source") or []:
+        if (res.get("format") or "").lower() in _SPATIAL_SOURCE_FORMATS:
             return True
     return False
 
@@ -81,6 +118,7 @@ def _build():
                 "est_rows": 0,
                 "table_count": 0,
                 "versions_url": t.get("versions_url"),
+                "file_only": False,
             }
             datasets[ds_id] = rec
             order.append(ds_id)
@@ -102,6 +140,34 @@ def _build():
                 # Keep the column list (name/type) for the advanced-query
                 # dialog's field picker — avoids hand-typing Hebrew names.
                 rec["spatial_columns"] = t.get("columns") or []
+
+    # Merge in file-only datasets: those in /api/v1 with no datastore table
+    # (absent from /api/tables). These are often the heavy layers (100k+ rows,
+    # e.g. GPKG) that are stored as files only, without an idx table. They
+    # load via Route A (file) only — no Route B / datastore.
+    for item in _fetch_all_datasets():
+        ds_id = item.get("id")
+        if not ds_id or ds_id in datasets:
+            continue
+        org = item.get("organization")
+        org_name = org.get("name") if isinstance(org, dict) else org
+        datasets[ds_id] = {
+            "dataset_id": ds_id,
+            "title": item.get("title") or "",
+            "organization": org_name,
+            "source_type": item.get("source_type"),
+            "ckan_id": item.get("ckan_id"),
+            "is_spatial": _file_only_is_spatial(item),
+            "spatial_table": None,
+            "spatial_schema": None,
+            "spatial_columns": None,
+            "est_rows": 0,
+            "table_count": 0,
+            "versions_url": item.get("versions_url"),
+            "file_only": True,
+        }
+        order.append(ds_id)
+
     return datasets, order, gateway
 
 
