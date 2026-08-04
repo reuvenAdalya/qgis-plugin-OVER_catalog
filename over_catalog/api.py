@@ -178,6 +178,7 @@ def resources_from_version(version):
                 "kind": "odata",
                 "name": name,
                 "fmt": fmt,
+                "gdal_format": None,
                 "uri": None,
                 "download_url": None,
                 "odata_url": res.get("odata_resource_url"),
@@ -186,18 +187,48 @@ def resources_from_version(version):
             })
             continue
 
-        is_spatial = (fmt == "geojson") or (".geojson" in download_url.lower())
-        kind = "vector" if is_spatial else "table"
+        kind, gdal_format = classify_resource(fmt, name, download_url)
         items.append({
-            "kind": kind,
+            "kind": kind,              # vector | table | other
             "name": name,
             "fmt": fmt,
-            "uri": build_uri(download_url, kind),
+            "gdal_format": gdal_format,  # geojson|gpkg|kml|csv|... (drives URI)
+            "uri": build_uri(download_url, gdal_format),
             "download_url": download_url,
             "rows": rows,
             "label": display_label(name, rows, fmt),
         })
     return items
+
+
+# Formats GDAL can open as a vector layer (over /vsicurl/) vs. attribute
+# tables vs. everything else (download-only; shown via the "show all files"
+# setting). A ZIP from over.org.il is a symbology bundle, not a shapefile, so
+# it is treated as "other".
+_VECTOR_GDAL = {"geojson", "gpkg", "kml", "kmz", "gml"}
+
+
+def classify_resource(fmt, name, download_url):
+    """
+    Decide how a file resource loads. Returns (kind, gdal_format):
+      kind        : 'vector' | 'table' | 'other'
+      gdal_format : token that drives build_uri / uri_candidates
+    """
+    f = (fmt or "").lower()
+    low = (download_url or "").lower()
+
+    if f == "geojson" or ".geojson" in low:
+        return "vector", "geojson"
+    if f == "gpkg" or low.endswith("gpkg") or ".gpkg" in low:
+        return "vector", "gpkg"
+    if f in ("kml", "kmz") or low.endswith("kml") or low.endswith("kmz"):
+        return "vector", (f or "kml")
+    if f == "gml" or low.endswith(".gml"):
+        return "vector", "gml"
+    if f in ("csv", "tsv") or low.endswith(".csv") or (not f and "נתוני" in (name or "")):
+        return "table", "csv"
+    # zip (symbology), pdf, xml, json, xlsx, ... : not a QGIS layer.
+    return "other", (f or "file")
 
 
 # Internal resource names -> friendlier Hebrew labels. NOTE: the Browser tree
@@ -232,29 +263,43 @@ def _is_gzip(download_url):
     return low.endswith(".gz") or ".geojson.gz" in low
 
 
-def build_uri(download_url, kind, force_gz=None):
+def build_uri(download_url, gdal_format, force_gz=None):
     """
-    Build a /vsicurl/ path, wrapping in /vsigzip/ when the file is gzip'd.
-
-    force_gz: None -> auto-detect from the URL; True/False -> force (used by
-    uri_candidates() for load-time fallback when the filename is misleading).
+    Build the best-guess GDAL /vsicurl/ URI for a resource of `gdal_format`
+    (from classify_resource). The R2 filenames often lack a real extension, so
+    the driver is chosen from the known format rather than the URL suffix.
     """
+    vsicurl = f"/vsicurl/{download_url}"
     gz = _is_gzip(download_url) if force_gz is None else force_gz
-    core = (f"/vsigzip//vsicurl/{download_url}" if gz
-            else f"/vsicurl/{download_url}")
-    # CSV/tables have no extension in the URL, so force the OGR driver.
-    return f"CSV:{core}" if kind == "table" else core
+    if gdal_format == "geojson":
+        return f"/vsigzip/{vsicurl}" if gz else vsicurl
+    if gdal_format == "csv":
+        return f"CSV:{vsicurl}"
+    # gpkg / kml / kmz / gml / other: GDAL identifies these by content.
+    return vsicurl
 
 
-def uri_candidates(download_url, kind):
+def uri_candidates(download_url, gdal_format):
     """
-    Both URI forms (gzip / plain), best guess first — for load-time fallback:
-    try the first; if the resulting layer isn't valid, try the second.
+    Ordered URI forms to try at load time (best guess first) — the loader
+    falls through to the next when a layer comes back invalid. Covers the
+    gzip/plain ambiguity for GeoJSON and the driver-prefix ambiguity for
+    GPKG/CSV when the R2 filename has no usable extension.
     """
-    primary = _is_gzip(download_url)
+    vsicurl = f"/vsicurl/{download_url}"
+    if gdal_format == "geojson":
+        prim = _is_gzip(download_url)
+        cands = [(f"/vsigzip/{vsicurl}" if g else vsicurl) for g in (prim, not prim)]
+    elif gdal_format == "gpkg":
+        cands = [vsicurl, f"GPKG:{vsicurl}"]
+    elif gdal_format == "csv":
+        cands = [f"CSV:{vsicurl}", vsicurl]
+    elif gdal_format in ("kml", "kmz"):
+        cands = [vsicurl, f"KML:{vsicurl}"]
+    else:
+        cands = [vsicurl]
     out = []
-    for gz in (primary, not primary):
-        uri = build_uri(download_url, kind, force_gz=gz)
+    for uri in cands:
         if uri not in out:
             out.append(uri)
     return out

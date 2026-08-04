@@ -52,15 +52,18 @@ class OverCatalogPlugin:
         self.iface.addPluginToMenu(MENU_NAME, self.settings_action)
 
     def _open_settings(self):
-        from .settings_dialog import SettingsDialog, SETTINGS_SPATIAL_ONLY
+        from .settings_dialog import (
+            SettingsDialog, SETTINGS_SPATIAL_ONLY, SETTINGS_SHOW_ALL_FILES)
         from qgis.PyQt.QtCore import QSettings
-        before = QSettings().value(SETTINGS_SPATIAL_ONLY, False, type=bool)
+        s = QSettings()
+        keys = (SETTINGS_SPATIAL_ONLY, SETTINGS_SHOW_ALL_FILES)
+        before = [s.value(k) for k in keys]
         dlg = SettingsDialog(self.iface.mainWindow())
         if dlg.exec():
-            after = QSettings().value(SETTINGS_SPATIAL_ONLY, False, type=bool)
+            after = [s.value(k) for k in keys]
             if after != before:
-                # The tree filter only takes effect when a node re-runs
-                # createChildren, so refresh the OVER root to apply it now.
+                # These settings only take effect when nodes re-run
+                # createChildren, so rebuild the OVER tree to apply them now.
                 self._refresh_tree()
 
     def _refresh_tree(self):

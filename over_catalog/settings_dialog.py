@@ -16,6 +16,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtCore import QSettings, Qt
 
 SETTINGS_SPATIAL_ONLY = "over_catalog/spatial_only"
+SETTINGS_SHOW_ALL_FILES = "over_catalog/show_all_files"
 
 # RTL rich-text help shown in the dialog. The over.org.il link opens in the
 # system browser (setOpenExternalLinks below).
@@ -74,6 +75,9 @@ class SettingsDialog(QDialog):
         tree_layout = QVBoxLayout(tree_box)
         self.chk_spatial_only = QCheckBox("הצג רק מאגרים מרחביים")
         tree_layout.addWidget(self.chk_spatial_only)
+        self.chk_show_all_files = QCheckBox(
+            "הצג את כל הקבצים בדאטאסט (גם כאלה ש-QGIS לא פותח כשכבה)")
+        tree_layout.addWidget(self.chk_show_all_files)
         note = QLabel("⚠ שינוי ההגדרה יטען מחדש את עץ OVER "
                       "(הענף ייסגר וייבנה מחדש)")
         note.setWordWrap(True)
@@ -101,10 +105,14 @@ class SettingsDialog(QDialog):
         self.resize(560, 620)
 
     def _load_current(self):
+        s = QSettings()
         self.chk_spatial_only.setChecked(
-            QSettings().value(SETTINGS_SPATIAL_ONLY, True, type=bool))
+            s.value(SETTINGS_SPATIAL_ONLY, True, type=bool))
+        self.chk_show_all_files.setChecked(
+            s.value(SETTINGS_SHOW_ALL_FILES, False, type=bool))
 
     def accept(self):
-        QSettings().setValue(
-            SETTINGS_SPATIAL_ONLY, self.chk_spatial_only.isChecked())
+        s = QSettings()
+        s.setValue(SETTINGS_SPATIAL_ONLY, self.chk_spatial_only.isChecked())
+        s.setValue(SETTINGS_SHOW_ALL_FILES, self.chk_show_all_files.isChecked())
         super().accept()

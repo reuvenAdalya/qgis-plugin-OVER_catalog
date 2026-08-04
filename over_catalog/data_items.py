@@ -68,7 +68,8 @@ SOURCE_TYPE_LABELS = {
 # Items are cheap (no network until expanded), so a high cap is fine.
 PAGE_CAP = 2000
 
-SETTINGS_SPATIAL_ONLY = "over_catalog/spatial_only"       # tree filter
+SETTINGS_SPATIAL_ONLY = "over_catalog/spatial_only"        # tree filter
+SETTINGS_SHOW_ALL_FILES = "over_catalog/show_all_files"    # show non-openable files
 
 
 def _log(msg, level=Qgis.MessageLevel.Warning):
@@ -296,6 +297,13 @@ class DatasetItem(QgsDataCollectionItem):
         for it in loadable:
             children.append(self._file_item(it))
 
+        # Non-openable files (symbology zips, PDF, XML, ...) — only when the
+        # user opts in via the settings toggle. Shown as download/open items.
+        if QSettings().value(SETTINGS_SHOW_ALL_FILES, False, type=bool):
+            for it in items:
+                if it["kind"] == "other" and it.get("download_url"):
+                    children.append(OtherFileItem(self, it))
+
         if version.get("version_number", 1) > 1:
             children.append(PreviousVersionsItem(
                 self, "גרסאות קודמות",
@@ -343,10 +351,11 @@ class DatastoreLayerItem(QgsDataItem):
     Locator), which is acceptable for the small, bbox-filtered result sets.
     """
 
-    # Stable duck-typing marker: the GUI provider matches on this attribute
-    # rather than isinstance, so it keeps working across plugin reloads (where
-    # a browser-held item and the freshly-imported class differ by module).
+    # Stable duck-typing markers for the GUI provider (match on attribute, not
+    # isinstance, so they survive plugin reloads). OVER_DBLCLICK -> the GUI
+    # provider routes a double-click to handleDoubleClick().
     OVER_ROUTE_B = True
+    OVER_DBLCLICK = True
 
     def __init__(self, parent, rec, geom_type=None):
         title = rec.get("title") or rec["dataset_id"]
@@ -515,10 +524,12 @@ class OverDataItemGuiProvider(QgsDataItemGuiProvider):
         return PROVIDER_KEY
 
     def handleDoubleClick(self, item, context):
-        # Duck-type on the marker attribute, not isinstance — see OVER_ROUTE_B.
-        if getattr(item, "OVER_ROUTE_B", False):
-            item.handleDoubleClick()   # current-view load
-            return True                # suppress the default add
+        # Duck-typed: any OVER Custom leaf that wants to handle its own
+        # double-click sets OVER_DBLCLICK (Route B leaf loads; OtherFileItem
+        # opens the download URL). The browser does not consult a plain
+        # QgsDataItem.handleDoubleClick for us, so we route it here.
+        if getattr(item, "OVER_DBLCLICK", False):
+            return bool(item.handleDoubleClick())
         return False
 
     def populateContextMenu(self, item, menu, selectedItems, context):
@@ -551,3 +562,48 @@ def _open_free_query(scope_label):
         _notify(str(exc), Qgis.MessageLevel.Warning)
     except api.OverApiError as exc:
         _notify(f"שגיאת רשת: {exc}", Qgis.MessageLevel.Critical)
+
+
+# --------------------------------------------------------------------------
+# "Other" file leaf — a resource QGIS can't open as a layer (symbology zip,
+# PDF, XML, ...). Shown only when the "show all files" setting is on; it is a
+# download link, not a layer: double-click / right-click opens or copies the
+# URL. Custom item so the browser doesn't try to add it as a layer.
+# --------------------------------------------------------------------------
+
+class OtherFileItem(QgsDataItem):
+
+    OVER_DBLCLICK = True
+
+    def __init__(self, parent, item):
+        fmt = (item.get("fmt") or item.get("gdal_format") or "file").upper()
+        name = f"{item['name']} · {fmt}"
+        path = parent.path() + "/other/" + str(item["name"])
+        super().__init__(Qgis.BrowserItemType.Custom, parent, name, path,
+                         PROVIDER_KEY)
+        self.setState(Qgis.BrowserItemState.Populated)
+        self.setIcon(QgsApplication.getThemeIcon("/mIconFile.svg"))
+        self.url = item["download_url"]
+        self.setToolTip(
+            f"{self.url}\n(לא נפתח כשכבה ב-QGIS — הורדה/פתיחה בדפדפן)")
+
+    def handleDoubleClick(self):
+        self._open()
+        return True
+
+    def actions(self, parent):
+        a_open = QAction("פתח / הורד בדפדפן", parent)
+        a_open.triggered.connect(self._open)
+        a_copy = QAction("העתק קישור הורדה", parent)
+        a_copy.triggered.connect(self._copy)
+        return [a_open, a_copy]
+
+    def _open(self):
+        from qgis.PyQt.QtGui import QDesktopServices
+        from qgis.PyQt.QtCore import QUrl
+        QDesktopServices.openUrl(QUrl(self.url))
+
+    def _copy(self):
+        from qgis.PyQt.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.url)
+        _notify("הקישור הועתק ללוח")
