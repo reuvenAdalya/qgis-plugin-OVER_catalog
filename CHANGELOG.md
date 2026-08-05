@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- **Container files** — GPKG, GeoParquet and FlatGeobuf resources are now
+  shown as expandable nodes in the Browser tree. Expanding one lists its
+  sublayers (via a fast metadata query, no feature scan), and each sublayer
+  loads on its own. GeoParquet and FlatGeobuf are now recognized as vector
+  formats. Driver selection relies on the file extension.
+
 ## 1.1.0
 
 - **File-only datasets** — the catalog now also includes datasets that exist

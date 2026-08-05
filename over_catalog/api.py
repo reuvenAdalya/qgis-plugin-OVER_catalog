@@ -192,7 +192,8 @@ def resources_from_version(version):
             "kind": kind,              # vector | table | other
             "name": name,
             "fmt": fmt,
-            "gdal_format": gdal_format,  # geojson|gpkg|kml|csv|... (drives URI)
+            "gdal_format": gdal_format,  # geojson|gpkg|parquet|... (drives URI)
+            "container": gdal_format in CONTAINER_FORMATS,  # holds sublayers
             "uri": build_uri(download_url, gdal_format),
             "download_url": download_url,
             "rows": rows,
@@ -201,18 +202,19 @@ def resources_from_version(version):
     return items
 
 
-# Formats GDAL can open as a vector layer (over /vsicurl/) vs. attribute
-# tables vs. everything else (download-only; shown via the "show all files"
-# setting). A ZIP from over.org.il is a symbology bundle, not a shapefile, so
-# it is treated as "other".
-_VECTOR_GDAL = {"geojson", "gpkg", "kml", "kmz", "gml"}
+# Vector formats GDAL can open over /vsicurl/. CONTAINER_FORMATS are the ones
+# that may hold several sublayers (or a mixed-geometry layer), so the tree
+# shows them as an expandable node and lists the sublayers on demand. Driver
+# selection relies on the file EXTENSION (over.org.il stores each file with
+# its proper extension) — no content sniffing / forced drivers.
+CONTAINER_FORMATS = {"gpkg", "parquet", "fgb", "gml", "kml", "kmz"}
 
 
 def classify_resource(fmt, name, download_url):
     """
     Decide how a file resource loads. Returns (kind, gdal_format):
       kind        : 'vector' | 'table' | 'other'
-      gdal_format : token that drives build_uri / uri_candidates
+      gdal_format : token that drives build_uri (and container detection)
     """
     f = (fmt or "").lower()
     low = (download_url or "").lower()
@@ -221,6 +223,10 @@ def classify_resource(fmt, name, download_url):
         return "vector", "geojson"
     if f == "gpkg" or low.endswith("gpkg") or ".gpkg" in low:
         return "vector", "gpkg"
+    if f in ("parquet", "geoparquet") or low.endswith("parquet") or ".parquet" in low:
+        return "vector", "parquet"
+    if f in ("fgb", "flatgeobuf") or low.endswith("fgb") or ".fgb" in low:
+        return "vector", "fgb"
     if f in ("kml", "kmz") or low.endswith("kml") or low.endswith("kmz"):
         return "vector", (f or "kml")
     if f == "gml" or low.endswith(".gml"):

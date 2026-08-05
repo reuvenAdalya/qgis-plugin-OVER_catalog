@@ -159,6 +159,45 @@ def _geom_icon(geom_type):
     return QgsApplication.getThemeIcon(name)
 
 
+class ContainerFileItem(QgsDataCollectionItem):
+    """
+    A file that may hold several sublayers (GPKG / GeoParquet / FlatGeobuf /
+    GML / KML). Shown as an expandable node; on expand it lists the container's
+    sublayers via QgsProviderRegistry.querySublayers WITHOUT resolving geometry
+    types (that would scan features — slow/hanging over /vsicurl/ for big
+    files). Each sublayer is a native, loadable QgsLayerItem
+    (uri = .../file|layername=<name>). Driver selection relies on the file
+    extension.
+    """
+
+    def __init__(self, parent, item, title):
+        fmt = (item.get("fmt") or item.get("gdal_format") or "").upper()
+        label = f"{title} · {fmt}" if fmt else title
+        super().__init__(parent, label,
+                         parent.path() + "/" + str(item["name"]), PROVIDER_KEY)
+        self.file_uri = item["uri"]
+        self.setToolTip(item.get("download_url") or "")
+
+    def createChildren(self):
+        from qgis.core import QgsProviderRegistry, QgsWkbTypes
+        try:
+            subs = QgsProviderRegistry.instance().querySublayers(self.file_uri)
+        except Exception as exc:  # network / driver failure
+            return [QgsErrorItem(self, f"⚠ {exc}", self.path() + "/error")]
+        if not subs:
+            return [QgsErrorItem(self, "⚠ לא נמצאו שכבות בקובץ",
+                                 self.path() + "/empty")]
+        children = []
+        for s in subs:
+            name = s.name() or "layer"
+            leaf = QgsLayerItem(self, name, self.path() + "/" + name,
+                                s.uri(), Qgis.BrowserLayerType.Vector,
+                                s.providerKey() or "ogr")
+            leaf.setIcon(_geom_icon(QgsWkbTypes.displayString(s.wkbType())))
+            children.append(leaf)
+        return children
+
+
 # --------------------------------------------------------------------------
 # Root
 # --------------------------------------------------------------------------
@@ -294,8 +333,13 @@ class DatasetItem(QgsDataCollectionItem):
 
         items = api.resources_from_version(version)
         loadable = [it for it in items if it["kind"] in ("vector", "table")]
+        title = self.rec.get("title") or "—"
         for it in loadable:
-            children.append(self._file_item(it))
+            if it["kind"] == "vector" and it.get("container"):
+                # GPKG / GeoParquet / ... : expandable, lists its sublayers.
+                children.append(ContainerFileItem(self, it, title))
+            else:
+                children.append(self._file_item(it))
 
         # Non-openable files (symbology zips, PDF, XML, ...) — only when the
         # user opts in via the settings toggle. Shown as download/open items.
