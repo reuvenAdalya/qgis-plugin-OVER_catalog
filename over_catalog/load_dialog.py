@@ -35,14 +35,19 @@ _HIDDEN_COLUMNS = {"geom", "geometry_wkt"}
 class AdvancedQueryDialog(QDialog):
     """bbox toggle + field picker + a large SQL (WHERE) editor; see selection()."""
 
-    def __init__(self, title, columns=None, parent=None):
+    def __init__(self, title, columns=None, parent=None, show_bbox=True):
         """
         columns: list of {"name", "type"} for the table (from catalog_cache
         `spatial_columns`), or None/empty to hide the field picker.
+        show_bbox: False for a table with no geometry column (the table
+        fallback context-menu action in data_items.py) — there is nothing to
+        filter by extent, so the toggle is hidden and selection()["bbox"] is
+        always False.
         """
         super().__init__(parent)
         self.setWindowTitle(f"שאילתה מתקדמת — {title}")
         self._columns = columns or []
+        self._show_bbox = show_bbox
         self._build_ui()
 
     # -- UI ------------------------------------------------------------
@@ -50,9 +55,12 @@ class AdvancedQueryDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        self.chk_bbox = QCheckBox("רק בתחום התצוגה הנוכחית (bbox)")
-        self.chk_bbox.setChecked(True)
-        layout.addWidget(self.chk_bbox)
+        if self._show_bbox:
+            self.chk_bbox = QCheckBox("רק בתחום התצוגה הנוכחית (bbox)")
+            self.chk_bbox.setChecked(True)
+            layout.addWidget(self.chk_bbox)
+        else:
+            self.chk_bbox = None
 
         fields = [c for c in self._columns
                   if (c.get("name") not in _HIDDEN_COLUMNS
@@ -96,7 +104,8 @@ class AdvancedQueryDialog(QDialog):
     def selection(self):
         """{'bbox': bool, 'where': str|None} — where is None when left blank."""
         where = self.sql_edit.toPlainText().strip() or None
-        return {"bbox": self.chk_bbox.isChecked(), "where": where}
+        bbox = self.chk_bbox.isChecked() if self.chk_bbox is not None else False
+        return {"bbox": bbox, "where": where}
 
 
 class FreeQueryDialog(QDialog):

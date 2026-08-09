@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.3.0
+
+- **Three tree display modes** (Settings, replacing the old "spatial only" /
+  "show all files" toggles):
+  1. *Spatial only* — only spatial datasets/files (layers with geometry):
+     SHP, ZIP, GeoJSON, FGB, GPKG, GeoParquet, GML, KML, TIFF, PNG, plus
+     style/definition files (SLD, QML, QLR, LYR).
+  2. *All openable* (default) — the above plus non-spatial data QGIS/GDAL can
+     open as a table (CSV, XLS/XLSX, TXT, ...).
+  3. *All files* — every resource; ones QGIS can't open as a layer (PDF, XML,
+     ...) are shown as download links marked with a ⚠ warning.
+  A dataset is hidden in modes 1/2 when it has no content for that mode; mode
+  3 shows every dataset.
+- **Extensions on every file leaf** — file nodes (and their loaded layer
+  names) now always carry their extension, including `.geojson`.
+- **Copy server location** — right-clicking any file (leaf, container or
+  download link) offers to copy its raw server URL, for opening in other tools.
+- **ZIP handling** — over.org.il's ZIPs are symbology bundles (`_symbology`,
+  holding QML/SLD styles); these are shown as download links in the spatial
+  group. A non-symbology ZIP (a zipped shapefile) instead expands in the tree
+  and lists its vector sublayer(s) (the `.dbf`/`.shx`/`.prj` sidecars fold
+  into the single `.shp` entry).
+- **Raster and style/definition resources** — TIFF/PNG load as raster layers;
+  SLD/QML/QLR/LYR are shown (in spatial mode too) as download links.
+- **Info-table fallback** — datasets whose datastore table has no geometry
+  column and no file resources (bare lat/lon or X/Y fields) are now reachable:
+  a "load as info table" / advanced-query action on the dataset's right-click
+  menu (and, when the dataset has no other children, a leaf) loads the raw
+  table as an attribute-only layer. Hidden by the "spatial only" mode.
+- **QGIS 4 / Qt6 compatibility** — datastore fields are built via
+  `QMetaType.Type` (falling back to `QVariant.Type` on QGIS 3.34–3.37), and
+  the bulk `/api/tables` call follows redirects via `RedirectPolicyAttribute`
+  where `FollowRedirectsAttribute` was removed. Declared
+  `qgisMaximumVersion=4.99`. (Qt6 fixes contributed by Shai Sussman.)
+
 ## 1.2.0
 
 - **Container files** — GPKG, GeoParquet and FlatGeobuf resources are now

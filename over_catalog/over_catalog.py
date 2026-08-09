@@ -52,18 +52,16 @@ class OverCatalogPlugin:
         self.iface.addPluginToMenu(MENU_NAME, self.settings_action)
 
     def _open_settings(self):
-        from .settings_dialog import (
-            SettingsDialog, SETTINGS_SPATIAL_ONLY, SETTINGS_SHOW_ALL_FILES)
+        from .settings_dialog import SettingsDialog, SETTINGS_DISPLAY_MODE
         from qgis.PyQt.QtCore import QSettings
         s = QSettings()
-        keys = (SETTINGS_SPATIAL_ONLY, SETTINGS_SHOW_ALL_FILES)
-        before = [s.value(k) for k in keys]
+        before = s.value(SETTINGS_DISPLAY_MODE)
         dlg = SettingsDialog(self.iface.mainWindow())
         if dlg.exec():
-            after = [s.value(k) for k in keys]
+            after = s.value(SETTINGS_DISPLAY_MODE)
             if after != before:
-                # These settings only take effect when nodes re-run
-                # createChildren, so rebuild the OVER tree to apply them now.
+                # The display mode only takes effect when nodes re-run
+                # createChildren, so rebuild the OVER tree to apply it now.
                 self._refresh_tree()
 
     def _refresh_tree(self):

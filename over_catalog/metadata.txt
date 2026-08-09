@@ -1,12 +1,13 @@
 [general]
 name=OVER Catalog
 qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
 description=Browse and load the גרסאות לעם (OVER / over.org.il) catalog of Israeli public datasets — spatial layers, tables and live datastore queries — directly into QGIS.
 description[he]=דפדוף וטעינה של מאגרי פרויקט גרסאות לעם (over.org.il) — שכבות מרחביות, טבלאות ושאילתות חיות — ישירות ל-QGIS.
 about=OVER Catalog browses and loads the "גרסאות לעם" (OVER / over.org.il) version-tracking catalog of Israeli public datasets directly into QGIS: an OVER node in the Browser panel (source type -> organization -> dataset), a global search filter that reveals a dataset in the tree, whole-file GeoJSON/CSV loading, a live datastore layer filtered to the current map view, an advanced WHERE/SQL query builder with a field picker, and access to previous versions.
     "גרסאות לעם" היא מערכת שעוקבת אחרי שינויים במאגרי מידע ממשלתיים וציבוריים בישראל. המערכת החלה במעקב אחרי המאגרים הפתוחים באתר data.gov.il, וכיום היא מנטרת גם מקורות נוספים: מסד הנתונים של הכנסת, אתר הלשכה המרכזית לסטטיסטיקה (הלמ"ס), שכבות המידע המרחבי של GovMap, פרוטוקולי ועדות, מכרזים, החלטות ממשלה ועוד.
-version=1.2.0
-author=Reuven Kost, Guy Zomer
+version=1.3.0
+author=Reuven Kost, Guy Zomer, Shai Sussman
 email=reuvenkost@gmail.com
 tracker=https://github.com/reuvenAdalya/qgis-plugin-OVER_catalog/issues
 repository=https://github.com/reuvenAdalya/qgis-plugin-OVER_catalog
@@ -16,7 +17,8 @@ category=Web
 icon=icon.png
 experimental=False
 deprecated=False
-changelog=1.2.0 - Container files (GPKG / GeoParquet / FlatGeobuf) are now expandable in the tree and list their sublayers on demand; each sublayer loads on its own. GeoParquet and FlatGeobuf are recognized as vector formats.
+changelog=1.3.0 - Three tree display modes (Settings): "spatial only", "all openable" (default) and "all files"; the last marks non-openable files with a warning. Every file leaf now shows its extension (incl. .geojson). ZIP is treated as a spatial container and expands to its sublayer(s). Datasets whose datastore table has no geometry column and no file resources are reachable via a "load as info table" action. QGIS 4 / Qt6 compatibility (QMetaType-based fields, redirect policy) and qgisMaximumVersion=4.99. Adds Shai Sussman as author.
+    1.2.0 - Container files (GPKG / GeoParquet / FlatGeobuf) are now expandable in the tree and list their sublayers on demand; each sublayer loads on its own. GeoParquet and FlatGeobuf are recognized as vector formats.
     1.1.0 - Catalog now also includes file-only datasets (no datastore table) from /api/v1 — the heavy layers (100k+ rows, often GPKG) that lack an idx table. Route A now loads GPKG/KML/GML (not just GeoJSON) with the correct GDAL driver. New "show all files" setting lists non-openable resources (symbology zip, PDF, XML...) as download/open-in-browser links.
     1.0.2 - The "current view" datastore item in the Browser now shows the correct geometry-type icon (point / line / polygon) instead of always a point; the type is sampled once per dataset and cached.
     1.0.1 - Resolve Bandit security scan findings: annotate the safe (read-only, quoted-identifier) SQL construction, and log instead of silently passing in two exception handlers. No functional change.

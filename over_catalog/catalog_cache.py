@@ -35,6 +35,9 @@ DATASETS_URL = "https://www.over.org.il/api/v1/datasets"
 # source offers a spatial-format resource.
 _SPATIAL_SOURCE_TYPES = {"govmap", "scraper"}
 _SPATIAL_SOURCE_FORMATS = {"geojson", "kml", "kmz", "gpkg", "gml", "zip", "shp"}
+# Formats QGIS/GDAL can open as a layer or a table — used to decide whether a
+# file-only dataset has any openable content (the "all openable" tree mode).
+_OPENABLE_SOURCE_FORMATS = _SPATIAL_SOURCE_FORMATS | api.OPENABLE_FORMATS
 
 # {"ts": epoch, "datasets": {dataset_id: {...}}, "order": [...], "gateway": id}
 _CACHE = {"ts": 0.0, "datasets": None, "order": None, "gateway": None}
@@ -89,6 +92,16 @@ def _file_only_is_spatial(item):
     return False
 
 
+def _file_only_has_openable(item):
+    """True if a file-only dataset has any resource QGIS/GDAL can open."""
+    if _file_only_is_spatial(item):
+        return True
+    for res in item.get("new_resources_at_source") or []:
+        if (res.get("format") or "").lower() in _OPENABLE_SOURCE_FORMATS:
+            return True
+    return False
+
+
 def _build():
     """
     Fetch /api/tables and aggregate into one record per dataset_id:
@@ -115,6 +128,13 @@ def _build():
                 "spatial_table": None,
                 "spatial_schema": None,
                 "spatial_columns": None,
+                "primary_table": None,
+                "primary_schema": None,
+                "primary_columns": None,
+                # A datastore table is always openable (spatially via Route B,
+                # or as an info table via the non-spatial fallback), so any
+                # table-based dataset counts as "has openable content".
+                "has_openable": True,
                 "est_rows": 0,
                 "table_count": 0,
                 "versions_url": t.get("versions_url"),
@@ -124,6 +144,14 @@ def _build():
             order.append(ds_id)
         rec["table_count"] += 1
         rec["est_rows"] += int(t.get("est_rows") or 0)
+        # Remember the first table seen for this dataset regardless of
+        # spatiality, so a dataset whose only datastore table has no geometry
+        # column (bare lat/lon or X/Y, not a real PostGIS geometry) still has
+        # something queryable — see DatasetItem.over_table_fallback.
+        if not rec.get("primary_table"):
+            rec["primary_table"] = t.get("table")
+            rec["primary_schema"] = t.get("schema") or DEFAULT_SPATIAL_SCHEMA
+            rec["primary_columns"] = t.get("columns") or []
         # First ckan dataset seen becomes the Route B gateway (ckan datasets
         # have their own NEON append DB, so their /api/append id is accepted;
         # from there SQL can reach every schema, incl. idx spatial tables).
@@ -161,6 +189,10 @@ def _build():
             "spatial_table": None,
             "spatial_schema": None,
             "spatial_columns": None,
+            "primary_table": None,
+            "primary_schema": None,
+            "primary_columns": None,
+            "has_openable": _file_only_has_openable(item),
             "est_rows": 0,
             "table_count": 0,
             "versions_url": item.get("versions_url"),
@@ -227,10 +259,25 @@ def organizations(source_type):
     return sorted(seen)
 
 
-def datasets(source_type=None, organization=None, spatial_only=False):
+def visible_in_mode(rec, mode):
     """
-    Records matching the given source_type / organization filters, sorted by
-    title. `organization` matches the same "—" fallback used for the tree.
+    Whether a dataset should appear in the tree for the given display mode:
+      1 (spatial only)  -> has spatial content (geometry table / spatial file)
+      2 (all openable)  -> has any content QGIS/GDAL can open (spatial or data)
+      3 (all files)     -> always (even datasets with no openable content)
+    """
+    if mode <= 1:
+        return bool(rec.get("is_spatial"))
+    if mode == 2:
+        return bool(rec.get("has_openable"))
+    return True
+
+
+def datasets(source_type=None, organization=None, mode=3):
+    """
+    Records matching the given source_type / organization filters and display
+    `mode` (see visible_in_mode), sorted by title. `organization` matches the
+    same "—" fallback used for the tree.
     """
     _ensure()
     out = []
@@ -240,7 +287,7 @@ def datasets(source_type=None, organization=None, spatial_only=False):
         if organization is not None \
                 and (rec.get("organization") or "—") != organization:
             continue
-        if spatial_only and not rec["is_spatial"]:
+        if not visible_in_mode(rec, mode):
             continue
         out.append(rec)
     out.sort(key=lambda r: (r.get("title") or "").lower())

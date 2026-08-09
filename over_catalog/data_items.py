@@ -68,8 +68,21 @@ SOURCE_TYPE_LABELS = {
 # Items are cheap (no network until expanded), so a high cap is fine.
 PAGE_CAP = 2000
 
-SETTINGS_SPATIAL_ONLY = "over_catalog/spatial_only"        # tree filter
-SETTINGS_SHOW_ALL_FILES = "over_catalog/show_all_files"    # show non-openable files
+# Tree display mode (replaces the old spatial_only / show_all_files toggles):
+#   1 = spatial only     — only datasets/files that are spatial layers.
+#   2 = all openable      — everything QGIS/GDAL can open (spatial + CSV/XLS/…).
+#   3 = all files         — every file; non-openable ones get a warning marker.
+SETTINGS_DISPLAY_MODE = "over_catalog/display_mode"
+DISPLAY_MODE_DEFAULT = 2
+
+
+def display_mode():
+    """Current tree display mode (1/2/3); defaults to 2 (all openable)."""
+    try:
+        return int(QSettings().value(
+            SETTINGS_DISPLAY_MODE, DISPLAY_MODE_DEFAULT))
+    except (TypeError, ValueError):
+        return DISPLAY_MODE_DEFAULT
 
 
 def _log(msg, level=Qgis.MessageLevel.Warning):
@@ -98,17 +111,16 @@ def dataset_file_label(title, item):
     """
     Tree-leaf label AND loaded-layer name for a Route A file resource.
 
-    The primary GeoJSON (spatial) resource is named with the bare dataset
-    title — no ".geojson" — so double-clicking it drops a clean layer name
-    into the Layers panel. Non-geojson resources (CSV, etc.) keep their
-    extension so they stay distinguishable from the GeoJSON in the tree.
+    Every file keeps its extension (`.geojson`, `.csv`, `.gpkg`, ...) so its
+    type is visible in the tree and the loaded layer stays distinguishable
+    from same-dataset siblings.
     """
-    if item.get("kind") == "vector":
-        return title
-    fmt = (item.get("fmt") or "").lower()
-    if not fmt:
-        fmt = "csv" if item.get("kind") == "table" else "dat"
-    return f"{title}.{fmt}"
+    ext = (item.get("ext") or item.get("gdal_format")
+           or item.get("fmt") or "")
+    ext = str(ext).lower().lstrip(".")
+    if not ext:
+        ext = "csv" if item.get("kind") == "table" else "dat"
+    return f"{title}.{ext}"
 
 
 def current_view_name(title):
@@ -138,10 +150,56 @@ def _notify_loaded(layer, truncated):
         _notify(msg)
 
 
-def _layer_type(kind):
-    if kind == "vector":
-        return Qgis.BrowserLayerType.Vector
-    return Qgis.BrowserLayerType.TableLayer   # NoGeometry attribute table
+def _make_child(parent, item, title, warn=False):
+    """
+    Build the tree child for one resource:
+      * container  -> expandable node listing its sublayers on demand;
+      * vector / raster / table -> a native, loadable QgsLayerItem;
+      * style/definition files, and anything QGIS can't open -> a download
+        link (the non-openable ones flagged with a warning in "all files"
+        mode).
+    """
+    if item.get("container"):
+        return ContainerFileItem(parent, item, title)
+
+    layer_kind = item.get("layer_kind")
+    if layer_kind in ("vector", "raster", "table"):
+        label = dataset_file_label(title, item)
+        path = parent.path() + "/" + str(item["name"])
+        url = item.get("download_url")
+        if layer_kind == "raster":
+            return OverFileLayerItem(parent, label, path, item["uri"],
+                                     Qgis.BrowserLayerType.Raster, "gdal", url)
+        btype = (Qgis.BrowserLayerType.Vector if layer_kind == "vector"
+                 else Qgis.BrowserLayerType.TableLayer)
+        return OverFileLayerItem(parent, label, path, item["uri"], btype,
+                                 "ogr", url)
+
+    # Style/definition files (SLD/QML/...) and any non-openable resource.
+    return OtherFileItem(parent, item, warn=warn)
+
+
+def _file_children(parent, items, title, mode):
+    """
+    File-leaf children for a dataset or version, filtered by display `mode`:
+      1 spatial only -> only spatial-category resources;
+      2 all openable -> spatial + data (hide non-openable "other");
+      3 all files    -> everything, non-openable flagged with a warning.
+    """
+    children = []
+    for it in items:
+        if not it.get("download_url"):
+            continue  # odata / nothing to fetch
+        category = it.get("category", "other")
+        if mode <= 1 and category != "spatial":
+            continue
+        if mode == 2 and category == "other":
+            continue
+        warn = (mode >= 3 and category == "other")
+        child = _make_child(parent, it, title, warn=warn)
+        if child is not None:
+            children.append(child)
+    return children
 
 
 def _geom_icon(geom_type):
@@ -159,24 +217,63 @@ def _geom_icon(geom_type):
     return QgsApplication.getThemeIcon(name)
 
 
+class OverFileLayerItem(QgsLayerItem):
+    """
+    A Route A file leaf: loaded on double-click like any QgsLayerItem, but also
+    offering a right-click "copy server location" — the file's raw download URL
+    — so the same file can be opened in other tools.
+    """
+
+    def __init__(self, parent, name, path, uri, layer_type, provider, url):
+        super().__init__(parent, name, path, uri, layer_type, provider)
+        self.url = url or ""
+        if self.url:
+            self.setToolTip(self.url)
+
+    def actions(self, parent):
+        if not self.url:
+            return []
+        act = QAction("העתק מיקום הקובץ בשרת", parent)
+        act.triggered.connect(self._copy_url)
+        return [act]
+
+    def _copy_url(self):
+        from qgis.PyQt.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.url)
+        _notify("מיקום הקובץ הועתק ללוח")
+
+
 class ContainerFileItem(QgsDataCollectionItem):
     """
     A file that may hold several sublayers (GPKG / GeoParquet / FlatGeobuf /
-    GML / KML). Shown as an expandable node; on expand it lists the container's
-    sublayers via QgsProviderRegistry.querySublayers WITHOUT resolving geometry
-    types (that would scan features — slow/hanging over /vsicurl/ for big
-    files). Each sublayer is a native, loadable QgsLayerItem
-    (uri = .../file|layername=<name>). Driver selection relies on the file
-    extension.
+    GML / KML / ZIP). Shown as an expandable node; on expand it lists the
+    container's sublayers via QgsProviderRegistry.querySublayers WITHOUT
+    resolving geometry types (that would scan features — slow/hanging over
+    /vsicurl/ for big files). Each sublayer is a native, loadable QgsLayerItem
+    (uri = .../file|layername=<name>). For a zipped shapefile the archive's
+    single vector layer is listed (the .dbf/.shx/.prj sidecars fold into it).
+    Driver selection relies on the file extension.
     """
 
     def __init__(self, parent, item, title):
-        fmt = (item.get("fmt") or item.get("gdal_format") or "").upper()
-        label = f"{title} · {fmt}" if fmt else title
+        label = dataset_file_label(title, item)
         super().__init__(parent, label,
                          parent.path() + "/" + str(item["name"]), PROVIDER_KEY)
         self.file_uri = item["uri"]
-        self.setToolTip(item.get("download_url") or "")
+        self.download_url = item.get("download_url") or ""
+        self.setToolTip(self.download_url)
+
+    def actions(self, parent):
+        if not self.download_url:
+            return []
+        act = QAction("העתק מיקום הקובץ בשרת", parent)
+        act.triggered.connect(self._copy_url)
+        return [act]
+
+    def _copy_url(self):
+        from qgis.PyQt.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.download_url)
+        _notify("מיקום הקובץ הועתק ללוח")
 
     def createChildren(self):
         from qgis.core import QgsProviderRegistry, QgsWkbTypes
@@ -190,9 +287,11 @@ class ContainerFileItem(QgsDataCollectionItem):
         children = []
         for s in subs:
             name = s.name() or "layer"
-            leaf = QgsLayerItem(self, name, self.path() + "/" + name,
-                                s.uri(), Qgis.BrowserLayerType.Vector,
-                                s.providerKey() or "ogr")
+            # Sublayer leaf: its "server location" is the container's file URL.
+            leaf = OverFileLayerItem(self, name, self.path() + "/" + name,
+                                     s.uri(), Qgis.BrowserLayerType.Vector,
+                                     s.providerKey() or "ogr",
+                                     self.download_url)
             leaf.setIcon(_geom_icon(QgsWkbTypes.displayString(s.wkbType())))
             children.append(leaf)
         return children
@@ -269,15 +368,19 @@ class OrganizationItem(QgsDataCollectionItem):
         return self.name()
 
     def createChildren(self):
-        # Default: show only spatial datasets (this is a GIS tool). Users can
-        # turn this off in the settings dialog to also see tabular datasets.
-        spatial_only = QSettings().value(
-            SETTINGS_SPATIAL_ONLY, True, type=bool)
+        # Display mode (settings dialog) decides which datasets show here:
+        #   1 spatial only -> only spatial datasets;
+        #   2 all openable -> datasets with any QGIS-openable content;
+        #   3 all files    -> every dataset, even ones with no openable file.
+        # A non-spatial dataset's table-fallback context-menu action (see
+        # DatasetItem.over_table_fallback) is therefore only reachable in
+        # modes 2/3 — in mode 1 the dataset never becomes a DatasetItem here.
+        mode = display_mode()
         try:
             recs = catalog_cache.datasets(
                 source_type=self.source_type,
                 organization=self.org_name,
-                spatial_only=spatial_only,
+                mode=mode,
             )
         except api.OverApiError as exc:
             return [QgsErrorItem(self, f"⚠ {exc}", self.path() + "/error")]
@@ -309,6 +412,8 @@ class DatasetItem(QgsDataCollectionItem):
 
     def createChildren(self):
         children = []
+        mode = display_mode()
+        title = self.rec.get("title") or "—"
 
         # Route B leaf first: for spatial datasets this is the default load.
         if self.rec.get("is_spatial") and self.rec.get("spatial_table"):
@@ -323,58 +428,55 @@ class DatasetItem(QgsDataCollectionItem):
                 self, self.rec, self.rec.get("spatial_geom_type")))
 
         # Route A: file resources from the latest version (+ history node).
+        version, version_error = None, None
         try:
             version = api.get_latest_version(self.dataset_id)
         except api.OverApiError as exc:
-            if not children:
-                children.append(
-                    QgsErrorItem(self, f"⚠ {exc}", self.path() + "/error"))
-            return children
+            version_error = exc
 
-        items = api.resources_from_version(version)
-        loadable = [it for it in items if it["kind"] in ("vector", "table")]
-        title = self.rec.get("title") or "—"
-        for it in loadable:
-            if it["kind"] == "vector" and it.get("container"):
-                # GPKG / GeoParquet / ... : expandable, lists its sublayers.
-                children.append(ContainerFileItem(self, it, title))
-            else:
-                children.append(self._file_item(it))
-
-        # Non-openable files (symbology zips, PDF, XML, ...) — only when the
-        # user opts in via the settings toggle. Shown as download/open items.
-        if QSettings().value(SETTINGS_SHOW_ALL_FILES, False, type=bool):
-            for it in items:
-                if it["kind"] == "other" and it.get("download_url"):
-                    children.append(OtherFileItem(self, it))
-
-        if version.get("version_number", 1) > 1:
-            children.append(PreviousVersionsItem(
-                self, "גרסאות קודמות",
-                self.path() + "/history", self.dataset_id,
-                self.rec.get("title") or "—"))
+        if version is not None:
+            items = api.resources_from_version(version)
+            children.extend(_file_children(self, items, title, mode))
+            if version.get("version_number", 1) > 1:
+                children.append(PreviousVersionsItem(
+                    self, "גרסאות קודמות",
+                    self.path() + "/history", self.dataset_id, title))
 
         if not children:
-            children.append(QgsErrorItem(
-                self, "⚠ אין קבצים טעינים בגרסה זו",
-                self.path() + "/unavailable"))
+            # No spatial leaf and no visible files. If this is a non-spatial
+            # datastore-only dataset, surface its info-table fallback (also on
+            # the right-click menu — see over_table_fallback); otherwise show
+            # the appropriate error.
+            if self.over_table_fallback() is not None:
+                children.append(TableFallbackItem(
+                    self, self.path() + "/table", self.rec))
+            elif version_error is not None:
+                children.append(QgsErrorItem(
+                    self, f"⚠ {version_error}", self.path() + "/error"))
+            else:
+                children.append(QgsErrorItem(
+                    self, "⚠ אין קבצים טעינים בגרסה זו",
+                    self.path() + "/unavailable"))
         return children
-
-    def _file_item(self, item):
-        """Route A leaf — a whole file loaded natively via its /vsicurl/ URI."""
-        label = dataset_file_label(self.rec.get("title") or "—", item)
-        return QgsLayerItem(
-            self,
-            label,
-            self.path() + "/" + item["name"],
-            item["uri"],
-            _layer_type(item["kind"]),
-            "ogr",
-        )
 
     # The dataset node has no load action of its own — Route A files load by
     # double-clicking their leaves, and Route B (incl. the advanced query) is
-    # on the "תצוגה נוכחית" leaf below.
+    # on the "תצוגה נוכחית" leaf below. The exception is over_table_fallback:
+    # a dataset with no geometry column (bare lat/lon or X/Y coordinate
+    # fields, not real PostGIS geometry — see catalog_cache._table_is_spatial)
+    # has no leaf offering its raw datastore table, so that load action lives
+    # on the context menu (OverDataItemGuiProvider.populateContextMenu) and,
+    # when the dataset has no other children, on the TableFallbackItem leaf.
+
+    def over_table_fallback(self):
+        """
+        This dataset's catalog record, if it has a datastore table but no
+        geometry column — used by OverDataItemGuiProvider.populateContextMenu
+        to add a "load as info table" action. None otherwise.
+        """
+        if self.rec.get("is_spatial") or not self.rec.get("primary_table"):
+            return None
+        return self.rec
 
 
 # --------------------------------------------------------------------------
@@ -477,6 +579,40 @@ class DatastoreLayerItem(QgsDataItem):
 
 
 # --------------------------------------------------------------------------
+# Non-spatial "info table" fallback leaf — shown for a datastore-only dataset
+# that has no geometry column and no file resources (so it gets neither a
+# Route A nor a Route B leaf). It loads the raw datastore table as an
+# attribute-only layer; the same action is also on the dataset's right-click
+# menu (see over_table_fallback / populateContextMenu).
+# --------------------------------------------------------------------------
+
+class TableFallbackItem(QgsDataItem):
+
+    OVER_DBLCLICK = True
+
+    def __init__(self, parent, path, rec):
+        super().__init__(Qgis.BrowserItemType.Custom, parent,
+                         "📋 טען כטבלת מידע (מאגר נתונים ללא שכבה מרחבית)",
+                         path, PROVIDER_KEY)
+        self.setState(Qgis.BrowserItemState.Populated)
+        self.setIcon(QgsApplication.getThemeIcon("/mIconTableLayer.svg"))
+        self.rec = rec
+        self.setToolTip("לחיצה כפולה טוענת את טבלת ה-datastore כטבלת מאפיינים")
+
+    def handleDoubleClick(self):
+        _load_table_fallback(self.rec)
+        return True
+
+    def actions(self, parent):
+        a_load = QAction("טען כטבלת מידע", parent)
+        a_load.triggered.connect(lambda: _load_table_fallback(self.rec))
+        a_query = QAction("שאילתה מתקדמת (טבלת מידע)...", parent)
+        a_query.triggered.connect(
+            lambda: _open_table_fallback_query(self.rec))
+        return [a_load, a_query]
+
+
+# --------------------------------------------------------------------------
 # previous versions (lazy, Route A)
 # --------------------------------------------------------------------------
 
@@ -522,16 +658,11 @@ class VersionItem(QgsDataCollectionItem):
 
     def createChildren(self):
         items = api.resources_from_version(self.version)
-        loadable = [it for it in items if it["kind"] in ("vector", "table")]
-        if not loadable:
+        children = _file_children(self, items, self.title, display_mode())
+        if not children:
             return [QgsErrorItem(self, "⚠ אין קבצים טעינים",
                                  self.path() + "/unavailable")]
-        return [
-            QgsLayerItem(self, dataset_file_label(self.title, it),
-                         self.path() + "/" + it["name"],
-                         it["uri"], _layer_type(it["kind"]), "ogr")
-            for it in loadable
-        ]
+        return children
 
 
 # --------------------------------------------------------------------------
@@ -588,6 +719,51 @@ class OverDataItemGuiProvider(QgsDataItemGuiProvider):
                 lambda checked=False, s=label: _open_free_query(s))
             menu.addAction(act)
 
+        # Dataset nodes with a datastore table but no geometry column (see
+        # DatasetItem.over_table_fallback) — load that raw table without
+        # depending on a lazily-populated tree leaf.
+        table_fallback = getattr(item, "over_table_fallback", None)
+        if callable(table_fallback):
+            rec = table_fallback()
+            if rec:
+                a_load = QAction(
+                    "טען כטבלת מידע (מאגר נתונים בלבד, ללא שכבה מרחבית)", menu)
+                a_load.triggered.connect(
+                    lambda checked=False, r=rec: _load_table_fallback(r))
+                menu.addAction(a_load)
+
+                a_query = QAction("שאילתה מתקדמת (טבלת מידע)...", menu)
+                a_query.triggered.connect(
+                    lambda checked=False, r=rec: _open_table_fallback_query(r))
+                menu.addAction(a_query)
+
+
+def _load_table_fallback(rec, where=None):
+    """Load a non-spatial dataset's raw datastore table as an attribute-only layer."""
+    title = rec.get("title") or rec["dataset_id"]
+    try:
+        layer, truncated = datastore.load_table(
+            rec["dataset_id"], rec["primary_table"], title,
+            schema=rec.get("primary_schema"), where=where,
+            source_type=rec.get("source_type"),
+        )
+        _notify_loaded(layer, truncated)
+    except datastore.DatastoreError as exc:
+        _notify(str(exc), Qgis.MessageLevel.Warning)
+    except api.OverApiError as exc:
+        _notify(f"שגיאת רשת: {exc}", Qgis.MessageLevel.Critical)
+
+
+def _open_table_fallback_query(rec):
+    """WHERE-only advanced query (no bbox — no geometry column to filter by)."""
+    from .load_dialog import AdvancedQueryDialog
+    from qgis.utils import iface
+    title = rec.get("title") or rec["dataset_id"]
+    dlg = AdvancedQueryDialog(title, columns=rec.get("primary_columns") or [],
+                              parent=iface.mainWindow(), show_bbox=False)
+    if dlg.exec():
+        _load_table_fallback(rec, where=dlg.selection()["where"])
+
 
 def _open_free_query(scope_label):
     """Open the free-SQL dialog and load its result as a layer."""
@@ -619,17 +795,21 @@ class OtherFileItem(QgsDataItem):
 
     OVER_DBLCLICK = True
 
-    def __init__(self, parent, item):
-        fmt = (item.get("fmt") or item.get("gdal_format") or "file").upper()
-        name = f"{item['name']} · {fmt}"
+    def __init__(self, parent, item, warn=False):
+        fmt = (item.get("fmt") or item.get("gdal_format")
+               or item.get("ext") or "file").upper()
+        name = f"{'⚠ ' if warn else ''}{item['name']} · {fmt}"
         path = parent.path() + "/other/" + str(item["name"])
         super().__init__(Qgis.BrowserItemType.Custom, parent, name, path,
                          PROVIDER_KEY)
         self.setState(Qgis.BrowserItemState.Populated)
-        self.setIcon(QgsApplication.getThemeIcon("/mIconFile.svg"))
+        icon = "/mIconWarning.svg" if warn else "/mIconFile.svg"
+        self.setIcon(QgsApplication.getThemeIcon(icon))
         self.url = item["download_url"]
-        self.setToolTip(
-            f"{self.url}\n(לא נפתח כשכבה ב-QGIS — הורדה/פתיחה בדפדפן)")
+        tip = f"{self.url}\n(לא נפתח כשכבה ב-QGIS — הורדה/פתיחה בדפדפן)"
+        if warn:
+            tip = "⚠ QGIS לא יודע לפתוח קובץ מסוג זה כשכבה.\n" + tip
+        self.setToolTip(tip)
 
     def handleDoubleClick(self):
         self._open()
@@ -638,7 +818,7 @@ class OtherFileItem(QgsDataItem):
     def actions(self, parent):
         a_open = QAction("פתח / הורד בדפדפן", parent)
         a_open.triggered.connect(self._open)
-        a_copy = QAction("העתק קישור הורדה", parent)
+        a_copy = QAction("העתק מיקום הקובץ בשרת", parent)
         a_copy.triggered.connect(self._copy)
         return [a_open, a_copy]
 
@@ -650,4 +830,4 @@ class OtherFileItem(QgsDataItem):
     def _copy(self):
         from qgis.PyQt.QtWidgets import QApplication
         QApplication.clipboard().setText(self.url)
-        _notify("הקישור הועתק ללוח")
+        _notify("מיקום הקובץ הועתק ללוח")

@@ -22,7 +22,7 @@ from qgis.core import (
     QgsProject, QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsRectangle, QgsMessageLog, Qgis,
 )
-from qgis.PyQt.QtCore import QUrl, QVariant
+from qgis.PyQt.QtCore import QUrl, QMetaType
 
 from . import api
 from . import catalog_cache
@@ -168,14 +168,19 @@ def _qualified_table(table, schema=None):
 
 
 def build_sql(table, schema=None, bbox=None, where=None,
-              limit=SERVER_PAGE_CAP, offset=0):
+              limit=SERVER_PAGE_CAP, offset=0, has_geom=True):
     """
-    SELECT every column plus geometry as GeoJSON, optionally filtered by a
-    bbox (ST_Intersects) and/or a raw WHERE fragment (advanced use).
+    SELECT every column, optionally filtered by a bbox (ST_Intersects) and/or
+    a raw WHERE fragment (advanced use). When has_geom, the geometry is also
+    selected as GeoJSON.
 
     schema: DB schema the table lives in (spatial tables are in `idx`); None
             leaves the table unqualified.
-    bbox:   (xmin, ymin, xmax, ymax) in EPSG:4326, or None.
+    bbox:   (xmin, ymin, xmax, ymax) in EPSG:4326, or None. Requires has_geom.
+    has_geom: False for datastore tables with no PostGIS geometry column
+              (e.g. bare lat/lon fields) — drops the geometry-as-GeoJSON
+              select and the bbox filter, since neither has a column to work
+              from. See load_table / data_items table fallback.
     limit/offset: one page's window. `limit` beyond SERVER_PAGE_CAP has no
                   effect on a single call — page via _fetch_paged instead.
 
@@ -189,11 +194,16 @@ def build_sql(table, schema=None, bbox=None, where=None,
     # executed against the read-only datastore_search_sql endpoint which takes
     # a full SQL string and cannot be parameterized.
     tbl = _qualified_table(table, schema)
-    select = (f'SELECT *, {PG}.ST_AsGeoJSON({GEOM_COL}) AS {GEOJSON_ALIAS} '  # nosec B608
-              f'FROM {tbl}')
+    if has_geom:
+        select = (f'SELECT *, {PG}.ST_AsGeoJSON({GEOM_COL}) AS {GEOJSON_ALIAS} '  # nosec B608
+                  f'FROM {tbl}')
+    else:
+        select = f'SELECT * FROM {tbl}'  # nosec B608
 
     clauses = []
     if bbox is not None:
+        if not has_geom:
+            raise ValueError("bbox filter requires has_geom=True")
         xmin, ymin, xmax, ymax = (float(v) for v in bbox)  # validate -> float
         clauses.append(
             f"{PG}.ST_Intersects({GEOM_COL}, "
@@ -211,7 +221,8 @@ def build_sql(table, schema=None, bbox=None, where=None,
 
 
 def _fetch_paged(dataset_id, table, schema=None, bbox=None, where=None,
-                 row_cap=DEFAULT_ROW_CAP, gateway_id=None, source_type=None):
+                 row_cap=DEFAULT_ROW_CAP, gateway_id=None, source_type=None,
+                 has_geom=True):
     """
     Accumulate up to `row_cap` records by issuing repeated SERVER_PAGE_CAP-
     sized SELECT ... LIMIT/OFFSET queries (the endpoint's per-query cap, see
@@ -240,7 +251,7 @@ def _fetch_paged(dataset_id, table, schema=None, bbox=None, where=None,
 
         page_size = min(SERVER_PAGE_CAP, row_cap - len(records))
         sql = build_sql(table, schema=schema, bbox=bbox, where=where,
-                        limit=page_size, offset=offset)
+                        limit=page_size, offset=offset, has_geom=has_geom)
         try:
             result = run_sql(dataset_id, sql, gateway_id=gateway_id,
                              source_type=source_type)
@@ -266,21 +277,43 @@ def _fetch_paged(dataset_id, table, schema=None, bbox=None, where=None,
 # Building the memory layer
 # --------------------------------------------------------------------------
 
+_META_FIELD_TYPES = {
+    bool: QMetaType.Type.Bool,
+    int: QMetaType.Type.LongLong,
+    float: QMetaType.Type.Double,
+}
+
+
+def _qgs_field(key, val):
+    """
+    Build a QgsField for `val`'s Python type, across the QGIS 3/4 split.
+
+    QgsField's QVariant.Type constructor is deprecated as of QGIS 3.38 and
+    QVariant.Bool/.LongLong/.Double/.String don't exist under Qt6 (QGIS 4),
+    so QMetaType.Type is used. The QMetaType overload itself only exists on
+    QGIS >= 3.38 though, so 3.34-3.37 builds (this plugin's stated minimum)
+    fall back to the old QVariant.Type constructor.
+    """
+    meta_type = _META_FIELD_TYPES.get(type(val), QMetaType.Type.QString)
+    try:
+        return QgsField(key, meta_type)
+    except TypeError:
+        from qgis.PyQt.QtCore import QVariant
+        variant_types = {
+            bool: QVariant.Bool,
+            int: QVariant.LongLong,
+            float: QVariant.Double,
+        }
+        return QgsField(key, variant_types.get(type(val), QVariant.String))
+
+
 def _fields_from_record(record):
     """Infer QgsFields from one record, skipping the geometry columns."""
     fields = QgsFields()
     for key, val in record.items():
         if key in (GEOM_COL, GEOJSON_ALIAS, "geometry_wkt"):
             continue
-        if isinstance(val, bool):
-            t = QVariant.Bool
-        elif isinstance(val, int):
-            t = QVariant.LongLong
-        elif isinstance(val, float):
-            t = QVariant.Double
-        else:
-            t = QVariant.String
-        fields.append(QgsField(key, t))
+        fields.append(_qgs_field(key, val))
     return fields
 
 
@@ -373,6 +406,30 @@ def load_layer(dataset_id, spatial_table, name, schema=None,
         raise DatastoreError("no features in the requested area")
 
     layer = layer_from_records(records, name)
+    QgsProject.instance().addMapLayer(layer)
+    return layer, truncated
+
+
+def load_table(dataset_id, table, name, schema=None, where=None,
+               row_cap=DEFAULT_ROW_CAP, gateway_id=None, source_type=None):
+    """
+    Load a non-spatial datastore table as an attribute-only layer — for
+    datasets whose datastore table has no PostGIS geometry column (see the
+    "table fallback" context-menu action in data_items.py), so there is no
+    bbox filter, only WHERE.
+
+    Returns (layer, truncated) — same contract as load_layer.
+    """
+    if not table:
+        raise DatastoreError("dataset has no datastore table")
+
+    records, truncated = _fetch_paged(
+        dataset_id, table, schema=schema, where=where, row_cap=row_cap,
+        gateway_id=gateway_id, source_type=source_type, has_geom=False)
+    if not records:
+        raise DatastoreError("no rows returned")
+
+    layer = _table_layer_from_records(records, name)
     QgsProject.instance().addMapLayer(layer)
     return layer, truncated
 

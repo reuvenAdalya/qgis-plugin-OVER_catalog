@@ -43,6 +43,27 @@ class OverApiError(Exception):
         self.status = status
 
 
+def _follow_redirects(req):
+    """
+    Ask the request to follow redirects, across the Qt5/Qt6 split.
+
+    Qt6 removed QNetworkRequest.Attribute.FollowRedirectsAttribute (the bool
+    flag used on Qt5); redirects are now opted into via RedirectPolicyAttribute
+    with a QNetworkRequest.RedirectPolicy value. NoLessSafeRedirectPolicy
+    matches the old FollowRedirectsAttribute behaviour (follow same-or-safer
+    redirects, e.g. https -> https on another host, which is what over.org.il
+    -> Cloudflare R2 needs) and is also Qt6's default, so this is only
+    necessary for the Qt5 builds where the default is still "don't follow".
+    """
+    try:
+        req.setAttribute(
+            QNetworkRequest.Attribute.FollowRedirectsAttribute, True)
+    except AttributeError:
+        req.setAttribute(
+            QNetworkRequest.Attribute.RedirectPolicyAttribute,
+            QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy)
+
+
 def fetch_json(url, timeout_ms=30000):
     """
     Blocking GET that returns decoded JSON.
@@ -54,7 +75,7 @@ def fetch_json(url, timeout_ms=30000):
     """
     req = QNetworkRequest(QUrl(url))
     req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, USER_AGENT)
-    req.setAttribute(QNetworkRequest.Attribute.FollowRedirectsAttribute, True)
+    _follow_redirects(req)
 
     reply = QgsNetworkAccessManager.instance().get(req)
 
@@ -148,13 +169,20 @@ def looks_like_uuid(text):
 def resources_from_version(version):
     """
     Convert a version object (from /latest or the /versions list) into a list
-    of loadable items. Each item:
+    of items describing every resource. Each item:
 
-        {kind, name, fmt, uri, download_url, rows, label, odata_url?}
+        {name, fmt, ext, category, layer_kind, container, kind, gdal_format,
+         uri, download_url, rows, label, odata_url?}
 
-    kind: 'vector' (spatial) | 'table' (attribute-only) | 'odata'
-          ('odata' has no download_url -> loaded via query_dataset_rows,
-           handled in the load layer, not here).
+    category   : 'spatial' | 'data' | 'other' — drives the tree display mode
+                 (spatial-only / all-openable / all-files; see data_items).
+    layer_kind : 'vector' | 'raster' | 'table' | None — how (if at all) the
+                 resource loads as a QGIS map layer. None = not a map layer
+                 (style/definition files, and anything QGIS can't open).
+    container  : True for a file that expands to sublayers in the tree
+                 (GPKG / GeoParquet / FlatGeobuf / GML / KML / zip / ...).
+    kind       : legacy coarse bucket ('vector' | 'table' | 'other' | 'odata')
+                 kept for pick_default and back-compat.
     """
     change = version.get("change_summary") or {}
     rows_by_res = {
@@ -178,6 +206,10 @@ def resources_from_version(version):
                 "kind": "odata",
                 "name": name,
                 "fmt": fmt,
+                "ext": "",
+                "category": "other",
+                "layer_kind": None,
+                "container": False,
                 "gdal_format": None,
                 "uri": None,
                 "download_url": None,
@@ -187,14 +219,23 @@ def resources_from_version(version):
             })
             continue
 
-        kind, gdal_format = classify_resource(fmt, name, download_url)
+        ext = resource_ext(fmt, name, download_url)
+        category, layer_kind, container = classify_ext(ext)
+        if ext == "zip" and _is_symbology(name, download_url):
+            # over.org.il's ZIPs are symbology bundles (QML/SLD styles), not
+            # zipped shapefiles: show them as a download link (spatial group,
+            # no warning) like the other style files, not as a data container.
+            layer_kind, container = None, False
         items.append({
-            "kind": kind,              # vector | table | other
             "name": name,
             "fmt": fmt,
-            "gdal_format": gdal_format,  # geojson|gpkg|parquet|... (drives URI)
-            "container": gdal_format in CONTAINER_FORMATS,  # holds sublayers
-            "uri": build_uri(download_url, gdal_format),
+            "ext": ext,                # canonical lowercase extension
+            "category": category,      # spatial | data | other
+            "layer_kind": layer_kind,  # vector | raster | table | None
+            "container": container,    # holds sublayers -> expandable node
+            "kind": _legacy_kind(category, layer_kind),
+            "gdal_format": ext,        # drives build_uri
+            "uri": build_uri(download_url, ext),
             "download_url": download_url,
             "rows": rows,
             "label": display_label(name, rows, fmt),
@@ -202,39 +243,119 @@ def resources_from_version(version):
     return items
 
 
-# Vector formats GDAL can open over /vsicurl/. CONTAINER_FORMATS are the ones
-# that may hold several sublayers (or a mixed-geometry layer), so the tree
-# shows them as an expandable node and lists the sublayers on demand. Driver
-# selection relies on the file EXTENSION (over.org.il stores each file with
-# its proper extension) — no content sniffing / forced drivers.
-CONTAINER_FORMATS = {"gpkg", "parquet", "fgb", "gml", "kml", "kmz"}
+# --------------------------------------------------------------------------
+# File-type taxonomy
+#
+# Each resource is placed in one of three display categories, matching the
+# three tree modes exposed in the settings dialog:
+#   spatial : GIS layers/rasters/styles — shown in every mode (incl. "spatial
+#             only"). ZIP is assumed to hold a shapefile and treated as a
+#             spatial container.
+#   data    : non-spatial data QGIS/GDAL can still open as a table (CSV, XLS,
+#             TXT, ...) — shown in "all openable" and "all files".
+#   other   : anything QGIS can't open as a layer (PDF, DOC, XML, ...) — shown
+#             only in "all files", with a warning marker.
+#
+# Driver selection relies on the file EXTENSION (over.org.il stores each file
+# with its proper extension) — no content sniffing / forced drivers.
+# --------------------------------------------------------------------------
+
+# Containers expand to sublayers in the tree (queried on demand). ZIP is here
+# too: a zipped shapefile is read via /vsizip/ and its single vector sublayer
+# is listed (the .dbf/.shx/.prj sidecars are folded into it, not shown).
+CONTAINER_FORMATS = {"gpkg", "parquet", "fgb", "gml", "kml", "kmz", "zip"}
+RASTER_FORMATS = {"tif", "tiff", "geotiff", "png", "jpg", "jpeg"}
+VECTOR_FORMATS = {"geojson", "shp"}
+# Style / layer-definition files: GIS-related (shown in "spatial only") but not
+# loadable as a map layer -> offered as a download/open link, no warning.
+STYLE_FORMATS = {"sld", "qml", "qlr", "lyr", "lyrx"}
+# Non-spatial tabular data QGIS/GDAL can open.
+TABLE_FORMATS = {"csv", "tsv", "txt", "xls", "xlsx", "ods"}
+
+SPATIAL_FORMATS = (CONTAINER_FORMATS | RASTER_FORMATS
+                   | VECTOR_FORMATS | STYLE_FORMATS)
+# Everything the software can open as a layer OR a table (spatial + data),
+# minus the style/definition files that aren't openable data. Used by
+# catalog_cache to decide dataset visibility in the "all openable" mode.
+OPENABLE_FORMATS = ((SPATIAL_FORMATS - STYLE_FORMATS) | TABLE_FORMATS)
+
+# Normalize format/extension synonyms to the canonical token above.
+_EXT_ALIASES = {
+    "geoparquet": "parquet",
+    "flatgeobuf": "fgb",
+    "json": "geojson",   # over.org.il's spatial snapshots are GeoJSON
+}
+
+
+def resource_ext(fmt, name, download_url):
+    """
+    Canonical lowercase extension for a resource: the declared `format` when
+    present, else parsed from the download URL's filename. Synonyms are
+    normalized (geoparquet -> parquet, flatgeobuf -> fgb).
+    """
+    f = (fmt or "").lower().strip().lstrip(".")
+    if not f:
+        f = _ext_from_url(download_url)
+    return _EXT_ALIASES.get(f, f)
+
+
+def _ext_from_url(download_url):
+    """Extension parsed from the URL's last path segment (dot- or _-joined)."""
+    low = (download_url or "").lower().split("?")[0].split("#")[0]
+    seg = low.rstrip("/").rsplit("/", 1)[-1]
+    if seg.endswith(".gz"):
+        seg = seg[:-3]  # look through the gzip wrapper (e.g. .geojson.gz)
+    for sep in (".", "_"):
+        if sep in seg:
+            cand = seg.rsplit(sep, 1)[-1]
+            if cand.isalnum() and 2 <= len(cand) <= 8:
+                return cand
+    return ""
+
+
+def _is_symbology(name, download_url):
+    """True for a symbology/style bundle (over.org.il names these `_symbology`)."""
+    hay = f"{name or ''} {download_url or ''}".lower()
+    return "symbology" in hay
+
+
+def classify_ext(ext):
+    """
+    Map a canonical extension to (category, layer_kind, container):
+      category   : 'spatial' | 'data' | 'other'
+      layer_kind : 'vector' | 'raster' | 'table' | None
+      container  : bool
+    """
+    if ext in CONTAINER_FORMATS:
+        return "spatial", "vector", True
+    if ext in RASTER_FORMATS:
+        return "spatial", "raster", False
+    if ext in VECTOR_FORMATS:
+        return "spatial", "vector", False
+    if ext in STYLE_FORMATS:
+        return "spatial", None, False       # shown, but not a loadable layer
+    if ext in TABLE_FORMATS:
+        return "data", "table", False
+    return "other", None, False
+
+
+def _legacy_kind(category, layer_kind):
+    """Coarse legacy bucket used by pick_default / historical callers."""
+    if layer_kind in ("vector", "raster"):
+        return "vector"
+    if layer_kind == "table":
+        return "table"
+    return "other"
 
 
 def classify_resource(fmt, name, download_url):
     """
-    Decide how a file resource loads. Returns (kind, gdal_format):
-      kind        : 'vector' | 'table' | 'other'
-      gdal_format : token that drives build_uri (and container detection)
+    Back-compat shim: (kind, gdal_format) for callers predating the richer
+    per-resource metadata built in resources_from_version.
     """
-    f = (fmt or "").lower()
-    low = (download_url or "").lower()
-
-    if f == "geojson" or ".geojson" in low:
-        return "vector", "geojson"
-    if f == "gpkg" or low.endswith("gpkg") or ".gpkg" in low:
-        return "vector", "gpkg"
-    if f in ("parquet", "geoparquet") or low.endswith("parquet") or ".parquet" in low:
-        return "vector", "parquet"
-    if f in ("fgb", "flatgeobuf") or low.endswith("fgb") or ".fgb" in low:
-        return "vector", "fgb"
-    if f in ("kml", "kmz") or low.endswith("kml") or low.endswith("kmz"):
-        return "vector", (f or "kml")
-    if f == "gml" or low.endswith(".gml"):
-        return "vector", "gml"
-    if f in ("csv", "tsv") or low.endswith(".csv") or (not f and "נתוני" in (name or "")):
-        return "table", "csv"
-    # zip (symbology), pdf, xml, json, xlsx, ... : not a QGIS layer.
-    return "other", (f or "file")
+    ext = resource_ext(fmt, name, download_url)
+    category, layer_kind, _ = classify_ext(ext)
+    return _legacy_kind(category, layer_kind), ext
 
 
 # Internal resource names -> friendlier Hebrew labels. NOTE: the Browser tree
@@ -281,7 +402,11 @@ def build_uri(download_url, gdal_format, force_gz=None):
         return f"/vsigzip/{vsicurl}" if gz else vsicurl
     if gdal_format == "csv":
         return f"CSV:{vsicurl}"
-    # gpkg / kml / kmz / gml / other: GDAL identifies these by content.
+    if gdal_format == "zip":
+        # Read inside the archive (e.g. a zipped shapefile) via /vsizip/;
+        # querySublayers on this lists the archive's vector sublayer(s).
+        return f"/vsizip/{vsicurl}"
+    # gpkg / kml / kmz / gml / raster / other: GDAL identifies these by content.
     return vsicurl
 
 
