@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.4.0
+
+- **Original symbology applied on load.** Most datasets ship a `_symbology`
+  bundle (GovMap's own SLD, plus SVG icons and a field dictionary). It is now
+  fetched and applied as the layer loads, so a layer arrives looking the way it
+  does on GovMap — categories, colours and Hebrew legend labels included. Works
+  for file layers, container sublayers and the live datastore layer alike (they
+  all carry the same attribute names).
+- **Hebrew field captions.** The bundle's field dictionary is attached as QGIS
+  field aliases, so the attribute table reads `התרעה` rather than `hatraha`.
+- **Icons actually render.** The SLD references its markers as `icons/x.svg`,
+  relative to itself; QGIS stores that path verbatim and never resolves it, so
+  the marker silently failed to draw. The bundle is now extracted to a cache
+  under the user's QGIS profile and the paths rewritten to absolute — profile
+  rather than temp, because those paths get saved into the project file.
+- **A style that would blank the layer is skipped.** A few GovMap styles filter
+  on a field that is not actually published (a numeric code whose text twin is
+  what ships). Applying one yields rules matching zero features — every feature
+  renders unstyled. The style's field references are now checked against the
+  layer first, and the layer is left alone (with a note) when they don't match.
+  Deliberately no fuzzy name matching: a near-miss name is a different field.
+- **Setting + inverse action.** "Apply original symbology" is on by default and
+  can be turned off; the right-click menu always offers the opposite of the
+  current setting, so both behaviours are one click away either way.
+- Applying a cached bundle costs ~0 ms; a first fetch measured 0.03–0.05 s.
+
 ## 1.3.0
 
 - **Three tree display modes** (Settings, replacing the old "spatial only" /

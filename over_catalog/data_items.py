@@ -35,6 +35,7 @@ from qgis.core import (
     QgsLayerItem,
     QgsErrorItem,
     QgsApplication,
+    QgsProject,
     Qgis,
     QgsMessageLog,
 )
@@ -50,6 +51,7 @@ except ImportError:  # pragma: no cover - Qt5 fallback
 from . import api
 from . import catalog_cache
 from . import datastore
+from . import symbology
 
 PROVIDER_KEY = "OVER"
 ROOT_PATH = "over:"
@@ -75,6 +77,11 @@ PAGE_CAP = 2000
 SETTINGS_DISPLAY_MODE = "over_catalog/display_mode"
 DISPLAY_MODE_DEFAULT = 2
 
+# Apply the dataset's official GovMap symbology to a layer as it loads. The
+# right-click menu always offers the OPPOSITE of this setting, so either way
+# the user is one click away from the other behaviour.
+SETTINGS_AUTO_SYMBOLOGY = "over_catalog/auto_symbology"
+
 
 def display_mode():
     """Current tree display mode (1/2/3); defaults to 2 (all openable)."""
@@ -83,6 +90,11 @@ def display_mode():
             SETTINGS_DISPLAY_MODE, DISPLAY_MODE_DEFAULT))
     except (TypeError, ValueError):
         return DISPLAY_MODE_DEFAULT
+
+
+def auto_symbology():
+    """Whether a double-click load also applies the official symbology."""
+    return QSettings().value(SETTINGS_AUTO_SYMBOLOGY, True, type=bool)
 
 
 def _log(msg, level=Qgis.MessageLevel.Warning):
@@ -150,17 +162,18 @@ def _notify_loaded(layer, truncated):
         _notify(msg)
 
 
-def _make_child(parent, item, title, warn=False):
+def _make_child(parent, item, title, warn=False, sym_url=None):
     """
     Build the tree child for one resource:
       * container  -> expandable node listing its sublayers on demand;
-      * vector / raster / table -> a native, loadable QgsLayerItem;
+      * vector / raster / table -> a loadable leaf (styled on load, see
+        OverFileLayerItem);
       * style/definition files, and anything QGIS can't open -> a download
         link (the non-openable ones flagged with a warning in "all files"
         mode).
     """
     if item.get("container"):
-        return ContainerFileItem(parent, item, title)
+        return ContainerFileItem(parent, item, title, sym_url=sym_url)
 
     layer_kind = item.get("layer_kind")
     if layer_kind in ("vector", "raster", "table"):
@@ -168,12 +181,14 @@ def _make_child(parent, item, title, warn=False):
         path = parent.path() + "/" + str(item["name"])
         url = item.get("download_url")
         if layer_kind == "raster":
-            return OverFileLayerItem(parent, label, path, item["uri"],
-                                     Qgis.BrowserLayerType.Raster, "gdal", url)
-        btype = (Qgis.BrowserLayerType.Vector if layer_kind == "vector"
-                 else Qgis.BrowserLayerType.TableLayer)
+            btype, provider = Qgis.BrowserLayerType.Raster, "gdal"
+        elif layer_kind == "vector":
+            btype, provider = Qgis.BrowserLayerType.Vector, "ogr"
+        else:
+            btype, provider = Qgis.BrowserLayerType.TableLayer, "ogr"
         return OverFileLayerItem(parent, label, path, item["uri"], btype,
-                                 "ogr", url)
+                                 provider, url, layer_kind=layer_kind,
+                                 sym_url=sym_url)
 
     # Style/definition files (SLD/QML/...) and any non-openable resource.
     return OtherFileItem(parent, item, warn=warn)
@@ -185,7 +200,13 @@ def _file_children(parent, items, title, mode):
       1 spatial only -> only spatial-category resources;
       2 all openable -> spatial + data (hide non-openable "other");
       3 all files    -> everything, non-openable flagged with a warning.
+
+    The version's symbology bundle (if any) is handed to every loadable leaf,
+    so a layer can be styled on load without a second lookup.
     """
+    bundle = symbology.bundle_from_items(items)
+    sym_url = bundle.get("download_url") if bundle else None
+
     children = []
     for it in items:
         if not it.get("download_url"):
@@ -196,7 +217,7 @@ def _file_children(parent, items, title, mode):
         if mode == 2 and category == "other":
             continue
         warn = (mode >= 3 and category == "other")
-        child = _make_child(parent, it, title, warn=warn)
+        child = _make_child(parent, it, title, warn=warn, sym_url=sym_url)
         if child is not None:
             children.append(child)
     return children
@@ -217,25 +238,94 @@ def _geom_icon(geom_type):
     return QgsApplication.getThemeIcon(name)
 
 
+def load_file_layer(uri, name, layer_kind, provider, sym_url=None,
+                    with_symbology=False):
+    """
+    Load a Route A file resource as a map layer and add it to the project.
+
+    `with_symbology` pulls the dataset's GovMap SLD bundle (see symbology.py)
+    and applies it; the bundle is cached, so a second layer of the same dataset
+    costs nothing. Returns the layer, or None when it did not open.
+    """
+    from qgis.core import QgsRasterLayer, QgsVectorLayer
+
+    if layer_kind == "raster":
+        layer = QgsRasterLayer(uri, name, provider or "gdal")
+    else:
+        layer = QgsVectorLayer(uri, name, provider or "ogr")
+    if not layer.isValid():
+        return None
+
+    if with_symbology and sym_url:
+        try:
+            if not symbology.apply_to_layer(layer, sym_url):
+                # Most often: the style filters on a field the data doesn't
+                # publish. Say so, or the missing styling looks like a bug.
+                _notify("השכבה נטענה ללא הסימבולוגיה המקורית "
+                        "(ראה יומן ההודעות: OVER)", Qgis.MessageLevel.Info)
+        except Exception as exc:      # styling must never block the load
+            _log(f"symbology failed for {name}: {exc}")
+
+    QgsProject.instance().addMapLayer(layer)
+    return layer
+
+
 class OverFileLayerItem(QgsLayerItem):
     """
-    A Route A file leaf: loaded on double-click like any QgsLayerItem, but also
-    offering a right-click "copy server location" — the file's raw download URL
-    — so the same file can be opened in other tools.
+    A Route A file leaf.
+
+    Double-click loads the file, applying the dataset's official symbology when
+    the auto-symbology setting is on. The right-click menu always offers the
+    OPPOSITE of that setting ("load without/with symbology"), plus a way to
+    copy the file's raw server URL for use in other tools.
     """
 
-    def __init__(self, parent, name, path, uri, layer_type, provider, url):
+    # Route the double-click through OverDataItemGuiProvider (see its note):
+    # the browser's default action would add the layer unstyled.
+    OVER_DBLCLICK = True
+
+    def __init__(self, parent, name, path, uri, layer_type, provider, url,
+                 layer_kind=None, sym_url=None):
         super().__init__(parent, name, path, uri, layer_type, provider)
         self.url = url or ""
+        self.layer_kind = layer_kind
+        self.sym_url = sym_url or ""
+        self.provider_key = provider
         if self.url:
             self.setToolTip(self.url)
 
+    # -- loading -----------------------------------------------------------
+
+    def handleDoubleClick(self):
+        self._load(with_symbology=auto_symbology())
+        return True
+
+    def _load(self, with_symbology):
+        layer = load_file_layer(
+            self.uri(), self.name(), self.layer_kind, self.provider_key,
+            sym_url=self.sym_url, with_symbology=with_symbology)
+        if layer is None:
+            _notify(f"לא ניתן לפתוח את {self.name()}", Qgis.MessageLevel.Warning)
+
+    # -- menu --------------------------------------------------------------
+
     def actions(self, parent):
-        if not self.url:
-            return []
-        act = QAction("העתק מיקום הקובץ בשרת", parent)
-        act.triggered.connect(self._copy_url)
-        return [act]
+        acts = []
+        # Always offer the opposite of the current default, so both behaviours
+        # are one click away whichever way the setting is set.
+        if self.sym_url and self.layer_kind != "table":
+            if auto_symbology():
+                act = QAction("טען ללא סימבולוגיה", parent)
+                act.triggered.connect(lambda: self._load(False))
+            else:
+                act = QAction("טען עם סימבולוגיה", parent)
+                act.triggered.connect(lambda: self._load(True))
+            acts.append(act)
+        if self.url:
+            copy = QAction("העתק מיקום הקובץ בשרת", parent)
+            copy.triggered.connect(self._copy_url)
+            acts.append(copy)
+        return acts
 
     def _copy_url(self):
         from qgis.PyQt.QtWidgets import QApplication
@@ -255,12 +345,13 @@ class ContainerFileItem(QgsDataCollectionItem):
     Driver selection relies on the file extension.
     """
 
-    def __init__(self, parent, item, title):
+    def __init__(self, parent, item, title, sym_url=None):
         label = dataset_file_label(title, item)
         super().__init__(parent, label,
                          parent.path() + "/" + str(item["name"]), PROVIDER_KEY)
         self.file_uri = item["uri"]
         self.download_url = item.get("download_url") or ""
+        self.sym_url = sym_url or ""
         self.setToolTip(self.download_url)
 
     def actions(self, parent):
@@ -287,11 +378,13 @@ class ContainerFileItem(QgsDataCollectionItem):
         children = []
         for s in subs:
             name = s.name() or "layer"
-            # Sublayer leaf: its "server location" is the container's file URL.
+            # Sublayer leaf: its "server location" is the container's file URL,
+            # and it shares the dataset's symbology bundle.
             leaf = OverFileLayerItem(self, name, self.path() + "/" + name,
                                      s.uri(), Qgis.BrowserLayerType.Vector,
                                      s.providerKey() or "ogr",
-                                     self.download_url)
+                                     self.download_url, layer_kind="vector",
+                                     sym_url=self.sym_url)
             leaf.setIcon(_geom_icon(QgsWkbTypes.displayString(s.wkbType())))
             children.append(leaf)
         return children
@@ -416,6 +509,7 @@ class DatasetItem(QgsDataCollectionItem):
         title = self.rec.get("title") or "—"
 
         # Route B leaf first: for spatial datasets this is the default load.
+        route_b = None
         if self.rec.get("is_spatial") and self.rec.get("spatial_table"):
             # Learn the real geometry type once (datastore columns are generic
             # `geometry`), cache it on the record, and use it for the leaf icon.
@@ -424,8 +518,9 @@ class DatasetItem(QgsDataCollectionItem):
                     self.dataset_id, self.rec["spatial_table"],
                     schema=self.rec.get("spatial_schema"),
                     source_type=self.rec.get("source_type"))
-            children.append(DatastoreLayerItem(
-                self, self.rec, self.rec.get("spatial_geom_type")))
+            route_b = DatastoreLayerItem(
+                self, self.rec, self.rec.get("spatial_geom_type"))
+            children.append(route_b)
 
         # Route A: file resources from the latest version (+ history node).
         version, version_error = None, None
@@ -436,6 +531,12 @@ class DatasetItem(QgsDataCollectionItem):
 
         if version is not None:
             items = api.resources_from_version(version)
+            # The datastore layer carries the same attributes as the file, so
+            # the dataset's symbology applies to it too — hand it over now that
+            # the version (and with it the bundle) is known.
+            if route_b is not None:
+                bundle = symbology.bundle_from_items(items)
+                route_b.sym_url = bundle.get("download_url") if bundle else ""
             children.extend(_file_children(self, items, title, mode))
             if version.get("version_number", 1) > 1:
                 children.append(PreviousVersionsItem(
@@ -518,6 +619,8 @@ class DatastoreLayerItem(QgsDataItem):
         self.spatial_columns = rec.get("spatial_columns") or []
         self.source_type = rec.get("source_type")
         self.layer_name = title
+        # Set by DatasetItem.createChildren once the version is known.
+        self.sym_url = ""
         self.setToolTip(
             "datastore_search_sql — נטען לזיכרון, ניתן לסינון לפי תצוגה")
 
@@ -543,9 +646,23 @@ class DatastoreLayerItem(QgsDataItem):
         a_view.triggered.connect(lambda: self._load(bbox=True))
         a_all = QAction("טען — כל השכבה", parent)
         a_all.triggered.connect(lambda: self._load(bbox=False))
+        acts = [a_view, a_all]
+        # Same convention as the file leaves: offer the opposite of the
+        # current auto-symbology setting.
+        if self.sym_url:
+            if auto_symbology():
+                a_sym = QAction("טען — תצוגה נוכחית, ללא סימבולוגיה", parent)
+                a_sym.triggered.connect(
+                    lambda: self._load(bbox=True, with_symbology=False))
+            else:
+                a_sym = QAction("טען — תצוגה נוכחית, עם סימבולוגיה", parent)
+                a_sym.triggered.connect(
+                    lambda: self._load(bbox=True, with_symbology=True))
+            acts.append(a_sym)
         a_adv = QAction("שאילתה מתקדמת...", parent)
         a_adv.triggered.connect(self._open_advanced_query)
-        return [a_view, a_all, a_adv]
+        acts.append(a_adv)
+        return acts
 
     def _open_advanced_query(self):
         from .load_dialog import AdvancedQueryDialog
@@ -558,7 +675,9 @@ class DatastoreLayerItem(QgsDataItem):
 
     # -- load --------------------------------------------------------------
 
-    def _load(self, bbox, where=None):
+    def _load(self, bbox, where=None, with_symbology=None):
+        if with_symbology is None:
+            with_symbology = auto_symbology()
         try:
             from qgis.utils import iface
             bb = datastore.canvas_bbox_4326(iface) if bbox else None
@@ -571,6 +690,11 @@ class DatastoreLayerItem(QgsDataItem):
                 schema=self.spatial_schema, bbox=bb, where=where,
                 source_type=self.source_type,
             )
+            if with_symbology and self.sym_url:
+                try:
+                    symbology.apply_to_layer(layer, self.sym_url)
+                except Exception as exc:   # styling never blocks the load
+                    _log(f"symbology failed for {name}: {exc}")
             _notify_loaded(layer, truncated)
         except datastore.DatastoreError as exc:
             _notify(str(exc), Qgis.MessageLevel.Warning)

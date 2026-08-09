@@ -10,8 +10,8 @@ plugin's functions. Opened from Plugins → OVER Catalog → הגדרות...
 """
 
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QGroupBox, QRadioButton, QLabel, QTextBrowser,
-    QDialogButtonBox,
+    QDialog, QVBoxLayout, QGroupBox, QRadioButton, QCheckBox, QLabel,
+    QTextBrowser, QDialogButtonBox,
 )
 from qgis.PyQt.QtCore import QSettings, Qt
 
@@ -19,6 +19,10 @@ from qgis.PyQt.QtCore import QSettings, Qt
 #   1 spatial only  2 all openable (default)  3 all files
 SETTINGS_DISPLAY_MODE = "over_catalog/display_mode"
 DISPLAY_MODE_DEFAULT = 2
+
+# Apply the dataset's official GovMap symbology when a layer loads. The
+# right-click menu always offers the opposite, so both are one click away.
+SETTINGS_AUTO_SYMBOLOGY = "over_catalog/auto_symbology"
 
 # RTL rich-text help shown in the dialog. The over.org.il link opens in the
 # system browser (setOpenExternalLinks below).
@@ -62,7 +66,11 @@ ABOUT_HTML = """
     שכבת SHP בתוך ZIP ועוד) — לחיצה כפולה טוענת את השכבה. קונטיינרים
     (GPKG / GeoParquet) ניתנים להרחבה בעץ, וכל תת-שכבה נטענת בנפרד.</li>
     <li><b>טבלאות</b> (CSV, XLS/XLSX, TXT) — מאפיינים בלבד, ללא גאומטריה.</li>
-    <li><b>חבילת סימבולוגיה</b> (ZIP) — קובצי עיצוב (QML/SLD); קישור להורדה.</li>
+    <li><b>חבילת סימבולוגיה</b> (ZIP) — העיצוב המקורי של GovMap (SLD +
+    אייקונים). מוחל אוטומטית על השכבה בעת טעינתה, יחד עם הכינויים העבריים
+    של השדות. קליק ימני על הקובץ מציע תמיד את הפעולה ההפוכה (טעינה עם/בלי
+    סימבולוגיה), וניתן לשנות את ברירת המחדל למעלה. אם העיצוב מסתמך על שדה
+    שאינו נמסר בנתונים — הוא לא יוחל, כדי שהשכבה לא תיעלם.</li>
     <li><b>🗺 תצוגה נוכחית</b> — שאילתה חיה למסד הנתונים (datastore). לחיצה
     כפולה טוענת רק את מה שנמצא בתחום התצוגה הנוכחית של המפה.</li>
     <li><b>גרסאות קודמות</b> — עותקים היסטוריים של המאגר; כל גרסה עם הקבצים
@@ -121,6 +129,20 @@ class SettingsDialog(QDialog):
         tree_layout.addWidget(note)
         layout.addWidget(tree_box)
 
+        sym_box = QGroupBox("סימבולוגיה")
+        sym_layout = QVBoxLayout(sym_box)
+        self.chk_auto_symbology = QCheckBox(
+            "החל אוטומטית את הסימבולוגיה המקורית על שכבה נטענת")
+        self.chk_auto_symbology.setToolTip(
+            "רוב המאגרים כוללים חבילת עיצוב (SLD) מקורית של GovMap. "
+            "בקליק ימני על הקובץ תמיד תוצע הפעולה ההפוכה להגדרה זו.")
+        sym_layout.addWidget(self.chk_auto_symbology)
+        sym_note = QLabel(
+            "כולל הצמדת הכינויים העבריים לשמות השדות בטבלת המאפיינים.")
+        sym_note.setWordWrap(True)
+        sym_layout.addWidget(sym_note)
+        layout.addWidget(sym_box)
+
         about_box = QGroupBox("אודות")
         about_layout = QVBoxLayout(about_box)
         self.about = QTextBrowser()
@@ -148,6 +170,8 @@ class SettingsDialog(QDialog):
             mode = DISPLAY_MODE_DEFAULT
         {1: self.rb_mode1, 2: self.rb_mode2, 3: self.rb_mode3}.get(
             mode, self.rb_mode2).setChecked(True)
+        self.chk_auto_symbology.setChecked(
+            s.value(SETTINGS_AUTO_SYMBOLOGY, True, type=bool))
 
     def accept(self):
         if self.rb_mode1.isChecked():
@@ -156,5 +180,8 @@ class SettingsDialog(QDialog):
             mode = 3
         else:
             mode = 2
-        QSettings().setValue(SETTINGS_DISPLAY_MODE, mode)
+        s = QSettings()
+        s.setValue(SETTINGS_DISPLAY_MODE, mode)
+        s.setValue(SETTINGS_AUTO_SYMBOLOGY,
+                   self.chk_auto_symbology.isChecked())
         super().accept()
