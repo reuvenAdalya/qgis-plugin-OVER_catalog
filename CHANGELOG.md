@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.2
+
+- **Fixed: symbology was never applied to raw file layers.** Only the live
+  "current view" layer got styled. The cause was not the data — QGIS's own
+  `layer_item` browser provider is registered before any plugin's and handles a
+  double-click on a *layer* item itself, adding the layer and stopping the
+  chain, so the plugin was never asked. (The datastore leaf is a Custom item,
+  which that provider ignores — hence the one route that did work.)
+- Styling now happens when the layer is **added** rather than when it is
+  clicked, so it no longer depends on winning the double-click. This also
+  covers drag-and-drop onto the canvas and "Add Selected Layers", neither of
+  which the click path would ever have caught.
+- Reopening a saved project keeps the styling saved in it: the hook stands down
+  while a project's layers are being restored, and while the plugin is loading
+  a layer itself (so "load without symbology" stays without).
+
 ## 1.4.1
 
 - **Field captions no longer depend on there being a style.** Not every layer

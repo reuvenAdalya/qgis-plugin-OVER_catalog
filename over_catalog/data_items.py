@@ -238,6 +238,66 @@ def _geom_icon(geom_type):
     return QgsApplication.getThemeIcon(name)
 
 
+# --------------------------------------------------------------------------
+# Styling layers that QGIS itself loads.
+#
+# The browser does NOT route a double-click on a *layer* item to our GUI
+# provider: QGIS's own `layer_item` provider is registered first, handles any
+# Qgis.BrowserItemType.Layer item, adds the layer and returns True — so
+# OverFileLayerItem.handleDoubleClick never runs (verified live against the
+# registered provider list). That is why the datastore leaf, a Custom item the
+# core provider ignores, could style itself while the file leaves could not.
+#
+# Rather than fight the core provider, we let it load the layer and then style
+# what it added: each file leaf registers its URI against the dataset's
+# symbology bundle, and a layerWasAdded hook (wired up in over_catalog.py)
+# matches a newly added layer back to its bundle. This also covers drag-and-
+# drop and "Add Selected Layers", which the double-click path never would.
+# --------------------------------------------------------------------------
+
+# {normalized layer source -> symbology bundle URL}, filled as tree items are
+# built. Bounded so a long browsing session cannot grow it without limit.
+_SYM_BY_URI = {}
+_SYM_URI_CAP = 4000
+
+# Set while we add a layer ourselves (the explicit with/without-symbology
+# actions), so the hook does not second-guess that deliberate choice.
+_SUPPRESS_AUTO_STYLE = False
+
+
+def _norm_source(uri):
+    """Layer source minus any provider suffix (`|layername=`, `|layerid=`)."""
+    return (uri or "").split("|")[0].strip()
+
+
+def register_symbology_uri(uri, sym_url):
+    """Remember which symbology bundle belongs to a loadable URI."""
+    if not uri or not sym_url:
+        return
+    if len(_SYM_BY_URI) >= _SYM_URI_CAP:
+        _SYM_BY_URI.clear()
+    _SYM_BY_URI[_norm_source(uri)] = sym_url
+
+
+def handle_layer_added(layer):
+    """
+    QgsProject.layerWasAdded hook: style a layer QGIS loaded from our tree.
+
+    Skipped while a project is being read (the project carries its own saved
+    styling, which must win) and while we are loading a layer ourselves.
+    """
+    if _SUPPRESS_AUTO_STYLE or not auto_symbology():
+        return
+    try:
+        if layer is None or not hasattr(layer, "renderer"):
+            return
+        sym_url = _SYM_BY_URI.get(_norm_source(layer.source()))
+        if sym_url:
+            _apply_symbology(layer, sym_url, layer.name())
+    except Exception as exc:          # never break another plugin's load
+        _log(f"symbology hook failed: {exc}")
+
+
 def _apply_symbology(layer, sym_url, name):
     """
     Style a freshly loaded layer from the dataset's bundle. Only a genuine skip
@@ -276,7 +336,14 @@ def load_file_layer(uri, name, layer_kind, provider, sym_url=None,
     if with_symbology and sym_url:
         _apply_symbology(layer, sym_url, name)
 
-    QgsProject.instance().addMapLayer(layer)
+    # This load already decided about styling; keep the layerWasAdded hook
+    # from overriding a deliberate "without symbology".
+    global _SUPPRESS_AUTO_STYLE
+    _SUPPRESS_AUTO_STYLE = True
+    try:
+        QgsProject.instance().addMapLayer(layer)
+    finally:
+        _SUPPRESS_AUTO_STYLE = False
     return layer
 
 
@@ -303,6 +370,10 @@ class OverFileLayerItem(QgsLayerItem):
         self.provider_key = provider
         if self.url:
             self.setToolTip(self.url)
+        # The core `layer_item` GUI provider, not us, handles a double-click on
+        # a layer item — so record the URI for the layerWasAdded hook, which is
+        # what actually styles the result (see the note above).
+        register_symbology_uri(uri, self.sym_url)
 
     # -- loading -----------------------------------------------------------
 

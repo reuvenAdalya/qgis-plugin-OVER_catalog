@@ -4,7 +4,7 @@ Main plugin class. Registers the Browser tree provider (layer 2), the
 Locator search filter (layer 3), and the settings dialog entry (layer 4).
 """
 
-from qgis.core import QgsApplication, Qgis, QgsMessageLog
+from qgis.core import QgsApplication, QgsProject, Qgis, QgsMessageLog
 from qgis.gui import QgsGui
 
 # QAction moved from QtWidgets (Qt5) to QtGui (Qt6); QGIS ships both bindings.
@@ -24,6 +24,9 @@ class OverCatalogPlugin:
         self.data_provider = None
         self.gui_provider = None
         self.settings_action = None
+        # True while QGIS is reading a project: layers arrive with the styling
+        # saved in that project, which must win over the catalog's symbology.
+        self._reading_project = False
 
     def initGui(self):
         # Browser tree provider (registry lives on QgsApplication).
@@ -45,11 +48,36 @@ class OverCatalogPlugin:
         self.locator_filter = OverLocatorFilter()
         self.iface.registerLocatorFilter(self.locator_filter)
 
+        # Apply the dataset's symbology to layers QGIS loads from our tree.
+        # A double-click on a file leaf is handled by QGIS's own `layer_item`
+        # GUI provider (registered before ours), so the layer is added without
+        # ever reaching us — styling it here catches that path, and equally
+        # drag-and-drop and "Add Selected Layers".
+        project = QgsProject.instance()
+        project.layerWasAdded.connect(self._on_layer_added)
+        project.layerLoaded.connect(self._on_project_layer_loaded)
+        project.readProject.connect(self._on_project_read)
+
         # Settings dialog entry, under Plugins -> OVER Catalog.
         self.settings_action = QAction(
             "הגדרות...", self.iface.mainWindow())
         self.settings_action.triggered.connect(self._open_settings)
         self.iface.addPluginToMenu(MENU_NAME, self.settings_action)
+
+    # -- symbology-on-load hooks -------------------------------------------
+
+    def _on_layer_added(self, layer):
+        if self._reading_project:
+            return
+        from .data_items import handle_layer_added
+        handle_layer_added(layer)
+
+    def _on_project_layer_loaded(self, current, total):
+        # Only ever emitted while a project's layers are being restored.
+        self._reading_project = True
+
+    def _on_project_read(self, doc=None):
+        self._reading_project = False
 
     def _open_settings(self):
         from .settings_dialog import SettingsDialog, SETTINGS_DISPLAY_MODE
@@ -83,6 +111,19 @@ class OverCatalogPlugin:
                 Qgis.MessageLevel.Warning)
 
     def unload(self):
+        project = QgsProject.instance()
+        for signal, slot in (
+            (project.layerWasAdded, self._on_layer_added),
+            (project.layerLoaded, self._on_project_layer_loaded),
+            (project.readProject, self._on_project_read),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError) as exc:
+                QgsMessageLog.logMessage(
+                    f"OVER: signal already disconnected: {exc}", "OVER",
+                    Qgis.MessageLevel.Info)
+
         if self.locator_filter is not None:
             self.iface.deregisterLocatorFilter(self.locator_filter)
             self.locator_filter = None
