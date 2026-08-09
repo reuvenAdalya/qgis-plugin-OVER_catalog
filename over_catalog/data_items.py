@@ -238,6 +238,23 @@ def _geom_icon(geom_type):
     return QgsApplication.getThemeIcon(name)
 
 
+def _apply_symbology(layer, sym_url, name):
+    """
+    Style a freshly loaded layer from the dataset's bundle. Only a genuine skip
+    (a style exists but would blank the layer) is reported — a dataset GovMap
+    simply has no style for is the common case and needs no message.
+    """
+    try:
+        outcome = symbology.apply_to_layer(layer, sym_url)
+    except Exception as exc:          # styling must never block the load
+        _log(f"symbology failed for {name}: {exc}")
+        return
+    if outcome == symbology.SKIPPED:
+        _notify("השכבה נטענה ללא הסימבולוגיה המקורית — היא מסתמכת על שדה "
+                "שאינו נמסר בנתונים (ראה יומן ההודעות: OVER)",
+                Qgis.MessageLevel.Info)
+
+
 def load_file_layer(uri, name, layer_kind, provider, sym_url=None,
                     with_symbology=False):
     """
@@ -257,14 +274,7 @@ def load_file_layer(uri, name, layer_kind, provider, sym_url=None,
         return None
 
     if with_symbology and sym_url:
-        try:
-            if not symbology.apply_to_layer(layer, sym_url):
-                # Most often: the style filters on a field the data doesn't
-                # publish. Say so, or the missing styling looks like a bug.
-                _notify("השכבה נטענה ללא הסימבולוגיה המקורית "
-                        "(ראה יומן ההודעות: OVER)", Qgis.MessageLevel.Info)
-        except Exception as exc:      # styling must never block the load
-            _log(f"symbology failed for {name}: {exc}")
+        _apply_symbology(layer, sym_url, name)
 
     QgsProject.instance().addMapLayer(layer)
     return layer
@@ -691,10 +701,7 @@ class DatastoreLayerItem(QgsDataItem):
                 source_type=self.source_type,
             )
             if with_symbology and self.sym_url:
-                try:
-                    symbology.apply_to_layer(layer, self.sym_url)
-                except Exception as exc:   # styling never blocks the load
-                    _log(f"symbology failed for {name}: {exc}")
+                _apply_symbology(layer, self.sym_url, name)
             _notify_loaded(layer, truncated)
         except datastore.DatastoreError as exc:
             _notify(str(exc), Qgis.MessageLevel.Warning)

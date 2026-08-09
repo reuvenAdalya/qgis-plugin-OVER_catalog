@@ -6,7 +6,7 @@ description=Browse and load the גרסאות לעם (OVER / over.org.il) catalog
 description[he]=דפדוף וטעינה של מאגרי פרויקט גרסאות לעם (over.org.il) — שכבות מרחביות, טבלאות ושאילתות חיות — ישירות ל-QGIS.
 about=OVER Catalog browses and loads the "גרסאות לעם" (OVER / over.org.il) version-tracking catalog of Israeli public datasets directly into QGIS: an OVER node in the Browser panel (source type -> organization -> dataset), a global search filter that reveals a dataset in the tree, whole-file GeoJSON/CSV loading, a live datastore layer filtered to the current map view, an advanced WHERE/SQL query builder with a field picker, and access to previous versions.
     "גרסאות לעם" היא מערכת שעוקבת אחרי שינויים במאגרי מידע ממשלתיים וציבוריים בישראל. המערכת החלה במעקב אחרי המאגרים הפתוחים באתר data.gov.il, וכיום היא מנטרת גם מקורות נוספים: מסד הנתונים של הכנסת, אתר הלשכה המרכזית לסטטיסטיקה (הלמ"ס), שכבות המידע המרחבי של GovMap, פרוטוקולי ועדות, מכרזים, החלטות ממשלה ועוד.
-version=1.4.0
+version=1.4.1
 author=Reuven Kost, Guy Zomer, Shai Sussman
 email=reuvenkost@gmail.com
 tracker=https://github.com/reuvenAdalya/qgis-plugin-OVER_catalog/issues
@@ -17,7 +17,8 @@ category=Web
 icon=icon.png
 experimental=False
 deprecated=False
-changelog=1.4.0 - Original GovMap symbology is now applied automatically when a layer loads: the dataset's _symbology bundle (SLD + SVG icons) is fetched, cached under the user profile, its relative icon paths rewritten to absolute ones, and the Hebrew field captions attached as field aliases. A style that filters on a field the data does not publish is skipped rather than applied, so the layer never renders blank. The right-click menu always offers the opposite of the setting (load with/without symbology).
+changelog=1.4.1 - A symbology bundle that carries only GovMap's field dictionary (no SLD — GovMap has no style for every layer) now still applies the Hebrew field captions, instead of being discarded whole. The "loaded without symbology" note is limited to the case that actually warrants it: a style that exists but references an unpublished field.
+    1.4.0 - Original GovMap symbology is now applied automatically when a layer loads: the dataset's _symbology bundle (SLD + SVG icons) is fetched, cached under the user profile, its relative icon paths rewritten to absolute ones, and the Hebrew field captions attached as field aliases. A style that filters on a field the data does not publish is skipped rather than applied, so the layer never renders blank. The right-click menu always offers the opposite of the setting (load with/without symbology).
     1.3.0 - Three tree display modes (Settings): "spatial only", "all openable" (default) and "all files"; the last marks non-openable files with a warning. Every file leaf now shows its extension (incl. .geojson). ZIP is treated as a spatial container and expands to its sublayer(s). Datasets whose datastore table has no geometry column and no file resources are reachable via a "load as info table" action. QGIS 4 / Qt6 compatibility (QMetaType-based fields, redirect policy) and qgisMaximumVersion=4.99. Adds Shai Sussman as author.
     1.2.0 - Container files (GPKG / GeoParquet / FlatGeobuf) are now expandable in the tree and list their sublayers on demand; each sublayer loads on its own. GeoParquet and FlatGeobuf are recognized as vector formats.
     1.1.0 - Catalog now also includes file-only datasets (no datastore table) from /api/v1 — the heavy layers (100k+ rows, often GPKG) that lack an idx table. Route A now loads GPKG/KML/GML (not just GeoJSON) with the correct GDAL driver. New "show all files" setting lists non-openable resources (symbology zip, PDF, XML...) as download/open-in-browser links.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.1
+
+- **Field captions no longer depend on there being a style.** Not every layer
+  has a GovMap style: some `_symbology` bundles carry only the field
+  dictionary. Such a bundle was previously discarded whole, so those datasets
+  lost their Hebrew field captions too. The dictionary is now applied on its
+  own — the layer simply keeps its default rendering.
+- The "loaded without symbology" note is limited to the case that warrants it
+  (a style exists but references a field the data doesn't publish). A dataset
+  GovMap has no style for is ordinary and now passes without a message.
+
 ## 1.4.0
 
 - **Original symbology applied on load.** Most datasets ship a `_symbology`

@@ -125,7 +125,12 @@ def _absolutize(sld_text, cache_dir):
 def ensure_bundle(download_url):
     """
     Download + extract the bundle once, returning
-    {"sld": <path>, "fields": {machine_name: hebrew_alias}} or None.
+    {"sld": <path or None>, "fields": {machine_name: hebrew_alias}}, or None
+    when the bundle holds neither.
+
+    Note that a bundle may legitimately carry ONLY the field dictionary:
+    GovMap has no style for every layer, and those bundles are still worth
+    fetching for the Hebrew field captions. `sld` is None in that case.
 
     Subsequent calls reuse the extracted cache directory, so applying a style
     to a second layer of the same dataset costs nothing.
@@ -135,8 +140,12 @@ def ensure_bundle(download_url):
     cache_dir = _cache_dir(download_url)
     sld_path = os.path.join(cache_dir, "style.sld")
     fields_path = os.path.join(cache_dir, "fields.csv")
-    if os.path.exists(sld_path):
-        return {"sld": sld_path, "fields": _read_field_aliases(fields_path)}
+    stamp = os.path.join(cache_dir, ".extracted")
+    if os.path.exists(stamp):
+        return {
+            "sld": sld_path if os.path.exists(sld_path) else None,
+            "fields": _read_field_aliases(fields_path),
+        }
 
     base = "/vsizip//vsicurl/" + download_url
     try:
@@ -146,37 +155,42 @@ def ensure_bundle(download_url):
         return None
 
     sld_name = next((n for n in names if n.lower().endswith(".sld")), None)
-    if not sld_name:
-        return None
-    raw = _vsi_read(f"{base}/{sld_name}")
-    if not raw:
+    fields_name = next((n for n in names if n.endswith("_fields.csv")), None)
+    if not sld_name and not fields_name:
         return None
 
     os.makedirs(cache_dir, exist_ok=True)
 
-    # Icons must land next to the style, since the hrefs are rewritten to
-    # point at them by absolute path.
-    if "icons" in names:
-        icon_dir = os.path.join(cache_dir, "icons")
-        os.makedirs(icon_dir, exist_ok=True)
-        for icon in (gdal.ReadDir(f"{base}/icons") or []):
-            data = _vsi_read(f"{base}/icons/{icon}")
-            if data:
-                with open(os.path.join(icon_dir, icon), "wb") as fh:
-                    fh.write(data)
+    if sld_name:
+        raw = _vsi_read(f"{base}/{sld_name}")
+        if raw:
+            # Icons must land next to the style, since the hrefs are rewritten
+            # to point at them by absolute path.
+            if "icons" in names:
+                icon_dir = os.path.join(cache_dir, "icons")
+                os.makedirs(icon_dir, exist_ok=True)
+                for icon in (gdal.ReadDir(f"{base}/icons") or []):
+                    data = _vsi_read(f"{base}/icons/{icon}")
+                    if data:
+                        with open(os.path.join(icon_dir, icon), "wb") as fh:
+                            fh.write(data)
+            sld_text = _absolutize(raw.decode("utf-8", "replace"), cache_dir)
+            with open(sld_path, "w", encoding="utf-8") as fh:
+                fh.write(sld_text)
 
-    sld_text = _absolutize(raw.decode("utf-8", "replace"), cache_dir)
-    with open(sld_path, "w", encoding="utf-8") as fh:
-        fh.write(sld_text)
-
-    fields_name = next((n for n in names if n.endswith("_fields.csv")), None)
     if fields_name:
         data = _vsi_read(f"{base}/{fields_name}")
         if data:
             with open(fields_path, "wb") as fh:
                 fh.write(data)
 
-    return {"sld": sld_path, "fields": _read_field_aliases(fields_path)}
+    with open(stamp, "w", encoding="utf-8") as fh:
+        fh.write(download_url)
+
+    return {
+        "sld": sld_path if os.path.exists(sld_path) else None,
+        "fields": _read_field_aliases(fields_path),
+    }
 
 
 def _read_field_aliases(fields_path):
@@ -214,23 +228,39 @@ def _referenced_fields(sld_path):
             if p.lower() not in GEOM_PSEUDO_FIELDS}
 
 
+# apply_to_layer outcomes.
+STYLED = "styled"        # the SLD was applied
+ALIASES = "aliases"      # no style in the bundle; Hebrew captions applied
+NO_BUNDLE = "none"       # nothing to apply — not an error
+SKIPPED = "skipped"      # a style exists but would blank the layer
+
+
 def apply_to_layer(layer, download_url, set_aliases=True):
     """
-    Apply the dataset's official symbology to `layer`.
+    Apply the dataset's official symbology (and Hebrew field captions) to
+    `layer`. Returns one of STYLED / ALIASES / NO_BUNDLE / SKIPPED.
 
-    Returns True when the style was applied. Returns False — leaving the layer
-    untouched — when there is no bundle, or when the style references an
-    attribute the layer does not publish (which would render every feature
-    unstyled; see the module docstring).
+    SKIPPED is the only outcome worth telling the user about: a style exists
+    but references an attribute the layer does not publish, so applying it
+    would leave every feature unstyled (see the module docstring). NO_BUNDLE
+    simply means GovMap has no style for this layer, which is common and
+    unremarkable.
     """
     if layer is None or not layer.isValid():
-        return False
+        return NO_BUNDLE
     if not hasattr(layer, "loadSldStyle"):
-        return False
+        return NO_BUNDLE
 
     bundle = ensure_bundle(download_url)
     if not bundle:
-        return False
+        return NO_BUNDLE
+
+    # Captions are independent of the style and are worth applying either way.
+    if set_aliases:
+        _apply_aliases(layer, bundle["fields"])
+
+    if not bundle["sld"]:
+        return ALIASES if bundle["fields"] else NO_BUNDLE
 
     field_names = {f.name() for f in layer.fields()}
     missing = _referenced_fields(bundle["sld"]) - field_names
@@ -238,19 +268,16 @@ def apply_to_layer(layer, download_url, set_aliases=True):
         _log(f"symbology: skipped for '{layer.name()}' — the style filters on "
              f"{sorted(missing)}, which the data does not publish",
              Qgis.MessageLevel.Warning)
-        return False
+        return SKIPPED
 
     message, ok = layer.loadSldStyle(bundle["sld"])
     if not ok:
         _log(f"symbology: QGIS rejected the SLD for '{layer.name()}': {message}",
              Qgis.MessageLevel.Warning)
-        return False
-
-    if set_aliases:
-        _apply_aliases(layer, bundle["fields"])
+        return SKIPPED
 
     layer.triggerRepaint()
-    return True
+    return STYLED
 
 
 def _apply_aliases(layer, aliases):
