@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.3
+
+- Documentation refresh. The in-plugin help (Settings → הגדרות) and the README
+  had both been left describing version 1.0 behaviour. They now cover the three
+  display modes, container files and their sublayers, the copy-server-location
+  action, the info-table fallback, and how symbology actually behaves —
+  including that not every layer has a style, and that a style which would
+  blank the layer is skipped.
+
 ## 1.4.2
 
 - **Fixed: symbology was never applied to raw file layers.** Only the live
