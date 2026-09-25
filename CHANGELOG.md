@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.4
+
+- **Fixed: "OVER: שגיאת רשת: Host requires authentication" on the current-view
+  layer.** over.org.il closed its per-dataset free-SQL endpoint
+  (`/api/append/{id}/datastore_search_sql`) to anonymous callers, and every
+  datastore load went through it.
+- The current-view (bbox) load, the whole-layer load and the geometry-type
+  probe behind the tree icons now use the public GeoJSON endpoint
+  `/api/tables/{table}/features?bbox=…`. It is filtered with the spatial index,
+  pages 5000 features at a time instead of 1000, and needs no authentication.
+- The info-table fallback of a ckan/cbs dataset uses the public
+  `datastore_search` endpoint.
+- The advanced WHERE query and the free-SQL dialog still need SQL. When the
+  server refuses them, the message now says that authentication is required,
+  instead of reporting a network error.
+
 ## 1.4.3
 
 - Documentation refresh. The in-plugin help (Settings → הגדרות) and the README

@@ -88,10 +88,13 @@ Requires **QGIS 3.34** or newer, including QGIS 4 (Qt6).
 Data is served by the **גרסאות לעם** project ([over.org.il](https://www.over.org.il/)),
 which version-tracks Israeli public datasets from data.gov.il, the Knesset
 database, the Central Bureau of Statistics (CBS), GovMap spatial layers, and
-more. The plugin uses the project's public `/api/v1` endpoints as well as the
-internal `/api/tables` and `/api/append/.../datastore_search_sql` endpoints;
-use of the internal endpoints was confirmed as permitted by the over.org.il
-maintainer. All network requests go through `QgsNetworkAccessManager` (QGIS
+more. The plugin uses the project's public `/api/v1` endpoints, the
+`/api/tables` catalog, `/api/tables/{table}/features` (GeoJSON by bbox, for
+the live current-view layer) and `/api/append/{id}/datastore_search`. Only the
+advanced WHERE query and the free-SQL dialog use
+`/api/append/.../datastore_search_sql`, which the server may restrict to
+authenticated callers. Use of these endpoints was confirmed as permitted by
+the over.org.il maintainer. All network requests go through `QgsNetworkAccessManager` (QGIS
 proxy settings are respected). Data is loaded read-only.
 
 ## Credits / based on
