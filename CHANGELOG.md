@@ -3,9 +3,10 @@
 ## 1.4.4
 
 - **Fixed: "OVER: שגיאת רשת: Host requires authentication" on the current-view
-  layer.** over.org.il closed its per-dataset free-SQL endpoint
-  (`/api/append/{id}/datastore_search_sql`) to anonymous callers, and every
-  datastore load went through it.
+  layer.** over.org.il can require authentication on its per-dataset free-SQL
+  endpoint (`/api/append/{id}/datastore_search_sql`), and every datastore load
+  went through it — so with that flag on, no datastore layer loads at all. The
+  common paths no longer depend on that endpoint.
 - The current-view (bbox) load, the whole-layer load and the geometry-type
   probe behind the tree icons now use the public GeoJSON endpoint
   `/api/tables/{table}/features?bbox=…`. It is filtered with the spatial index,
