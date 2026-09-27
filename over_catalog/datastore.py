@@ -1,12 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-Route B — load a layer from the NEON datastore via datastore_search_sql.
+Route B — load a layer from the NEON datastore.
 
-This uses the (undocumented but sanctioned) internal endpoint
-    GET /api/append/{dataset_id}/datastore_search_sql?sql=<SELECT ...>
-which runs a READ-ONLY SELECT/WITH against the dataset's Postgres table.
-PostGIS is available, so we ask for geometry as GeoJSON and can filter
-server-side by the current map extent with ST_Intersects.
+Two server paths, chosen by what the load needs:
+
+  * The public, anonymous GeoJSON endpoint
+        GET /api/tables/{table}/features?bbox=<min_lon,min_lat,max_lon,max_lat>
+    serves every table with a PostGIS `geom` column, clipped to a bbox with
+    the GiST index, 5000 features per page. The "current view" load, the
+    whole-layer load and the geometry-type probe all use it. For a non-spatial
+    ckan/cbs table, the anonymous CKAN-style
+        GET /api/append/{dataset_id}/datastore_search
+    does the same job for the info-table fallback.
+
+  * The free-SQL endpoint
+        GET /api/append/{dataset_id}/datastore_search_sql?sql=<SELECT ...>
+    runs a READ-ONLY SELECT/WITH. OVER may require authentication on it
+    (APPEND_SQL_REQUIRE_AUTH), so only the features that genuinely need SQL
+    go through it: the advanced WHERE query and the free-SQL dialog. A 401
+    there is reported as such (DatastoreError), not as a network failure.
 
 Geometry is WGS84 (EPSG:4326), so the memory layer CRS is fixed to 4326.
 
@@ -28,6 +40,19 @@ from . import api
 from . import catalog_cache
 
 APPEND_BASE = "https://www.over.org.il/api/append"
+TABLES_BASE = "https://www.over.org.il/api/tables"
+
+# /api/tables/{table}/features caps one page at this many features (the
+# server's MAX_FEATURES) and says whether more exist in exceededTransferLimit.
+FEATURES_PAGE_CAP = 5000
+
+# /api/append/{id}/datastore_search caps one page at this many rows.
+SEARCH_PAGE_CAP = 500
+
+AUTH_REQUIRED_MSG = (
+    "OVER דורש הזדהות לשאילתות SQL (שאילתה מתקדמת / SQL חופשי). "
+    "טעינת \"תצוגה נוכחית\" וטעינת קבצים ממשיכות לעבוד בלי הזדהות."
+)
 
 # Soft cap on features pulled into a memory layer. Raised from an earlier
 # 5000 once paging (below) made higher caps possible: live inventory of the
@@ -107,6 +132,8 @@ def run_sql(dataset_id, sql, gateway_id=None, source_type=None):
         try:
             return _run_sql_routed(dataset_id, sql, gateway_id, source_type)
         except api.OverApiError as exc:
+            if getattr(exc, "status", None) in (401, 403):
+                raise DatastoreError(AUTH_REQUIRED_MSG) from exc
             if _is_transient(exc) and attempt < MAX_RETRIES:
                 time.sleep(RETRY_BACKOFF_S * (attempt + 1))
                 continue
@@ -274,6 +301,135 @@ def _fetch_paged(dataset_id, table, schema=None, bbox=None, where=None,
 
 
 # --------------------------------------------------------------------------
+# Anonymous paths: /api/tables/{table}/features and datastore_search
+# --------------------------------------------------------------------------
+
+def _fetch_json_retrying(url):
+    """api.fetch_json with the same transient-failure retries as run_sql."""
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return api.fetch_json(url)
+        except api.OverApiError as exc:
+            if _is_transient(exc) and attempt < MAX_RETRIES:
+                time.sleep(RETRY_BACKOFF_S * (attempt + 1))
+                continue
+            raise
+
+
+def _clamp_bbox(bbox):
+    """
+    Clip a canvas extent to the WGS84 range. The endpoint rejects an
+    out-of-range box (400) rather than returning nothing, and a zoomed-out
+    canvas easily reaches past +-180/+-90.
+    """
+    xmin, ymin, xmax, ymax = (float(v) for v in bbox)
+    return (max(xmin, -180.0), max(ymin, -90.0),
+            min(xmax, 180.0), min(ymax, 90.0))
+
+
+def _features_url(table, bbox=None, limit=FEATURES_PAGE_CAP, offset=0):
+    """URL of one page of /api/tables/{table}/features."""
+    name = QUrl.toPercentEncoding(str(table)).data().decode("ascii")
+    url = (f"{TABLES_BASE}/{name}/features"
+           f"?limit={int(limit)}&offset={int(offset)}")
+    if bbox is not None:
+        url += "&bbox=" + ",".join(repr(v) for v in _clamp_bbox(bbox))
+    return url
+
+
+def _feature_to_record(feature):
+    """
+    One GeoJSON Feature -> the record shape layer_from_records builds from
+    (properties + the geometry as a GeoJSON string under GEOJSON_ALIAS), so
+    both routes share one layer builder.
+    """
+    rec = dict(feature.get("properties") or {})
+    geom = feature.get("geometry")
+    rec[GEOJSON_ALIAS] = json.dumps(geom) if geom else None
+    return rec
+
+
+def _fetch_features(table, bbox=None, row_cap=DEFAULT_ROW_CAP):
+    """
+    Page through /api/tables/{table}/features until the server says there is
+    nothing more (exceededTransferLimit false) or row_cap is reached.
+
+    The bbox filter is the GiST `&&` (bounding-box overlap), a slight superset
+    of ST_Intersects at viewport scale. Property values arrive as text, which
+    is what the idx-schema tables hold anyway.
+
+    Returns (records, truncated) with the same meaning as _fetch_paged.
+    """
+    if bbox is not None:
+        xmin, ymin, xmax, ymax = _clamp_bbox(bbox)
+        if xmin >= xmax or ymin >= ymax:
+            return [], False
+    records = []
+    offset = 0
+    truncated = False
+    first_page = True
+    while len(records) < row_cap:
+        if not first_page:
+            time.sleep(REQUEST_DELAY_S)  # pace requests, see REQUEST_DELAY_S
+        first_page = False
+
+        page_size = min(FEATURES_PAGE_CAP, row_cap - len(records))
+        try:
+            payload = _fetch_json_retrying(
+                _features_url(table, bbox=bbox, limit=page_size, offset=offset))
+        except api.OverApiError as exc:
+            if _is_transient(exc) and records:
+                truncated = True  # keep what we already fetched
+                break
+            raise
+        payload = payload if isinstance(payload, dict) else {}
+        features = payload.get("features") or []
+        records.extend(_feature_to_record(f) for f in features)
+        offset += len(features)
+        if not features or not payload.get("exceededTransferLimit"):
+            break  # the server says there is nothing more
+        if len(records) >= row_cap:
+            truncated = True  # stopped by the cap, not by data running out
+    return records, truncated
+
+
+def _fetch_search(dataset_id, row_cap=DEFAULT_ROW_CAP):
+    """
+    Page a ckan/cbs dataset's own table through the anonymous CKAN-style
+    datastore_search. Returns (records, truncated) like _fetch_paged.
+    """
+    records = []
+    offset = 0
+    truncated = False
+    first_page = True
+    while len(records) < row_cap:
+        if not first_page:
+            time.sleep(REQUEST_DELAY_S)
+        first_page = False
+
+        page_size = min(SEARCH_PAGE_CAP, row_cap - len(records))
+        url = (f"{APPEND_BASE}/{dataset_id}/datastore_search"
+               f"?limit={page_size}&offset={offset}&include_total=false")
+        try:
+            payload = _fetch_json_retrying(url)
+        except api.OverApiError as exc:
+            if _is_transient(exc) and records:
+                truncated = True
+                break
+            raise
+        result = payload.get("result", payload) \
+            if isinstance(payload, dict) else {}
+        page = result.get("records") or []
+        records.extend(page)
+        offset += len(page)
+        if len(page) < page_size:
+            break  # short page -> genuinely no more rows
+        if len(records) >= row_cap:
+            truncated = True
+    return records, truncated
+
+
+# --------------------------------------------------------------------------
 # Building the memory layer
 # --------------------------------------------------------------------------
 
@@ -399,9 +555,14 @@ def load_layer(dataset_id, spatial_table, name, schema=None,
     if not spatial_table:
         raise DatastoreError("dataset has no spatial table")
 
-    records, truncated = _fetch_paged(
-        dataset_id, spatial_table, schema=schema, bbox=bbox, where=where,
-        row_cap=row_cap, gateway_id=gateway_id, source_type=source_type)
+    if where:
+        # A WHERE clause needs the free-SQL endpoint, which may require auth.
+        records, truncated = _fetch_paged(
+            dataset_id, spatial_table, schema=schema, bbox=bbox, where=where,
+            row_cap=row_cap, gateway_id=gateway_id, source_type=source_type)
+    else:
+        records, truncated = _fetch_features(
+            spatial_table, bbox=bbox, row_cap=row_cap)
     if not records:
         raise DatastoreError("no features in the requested area")
 
@@ -423,9 +584,13 @@ def load_table(dataset_id, table, name, schema=None, where=None,
     if not table:
         raise DatastoreError("dataset has no datastore table")
 
-    records, truncated = _fetch_paged(
-        dataset_id, table, schema=schema, where=where, row_cap=row_cap,
-        gateway_id=gateway_id, source_type=source_type, has_geom=False)
+    if not where and source_type in NEON_SOURCE_TYPES:
+        # The dataset's own table with no filter: anonymous datastore_search.
+        records, truncated = _fetch_search(dataset_id, row_cap=row_cap)
+    else:
+        records, truncated = _fetch_paged(
+            dataset_id, table, schema=schema, where=where, row_cap=row_cap,
+            gateway_id=gateway_id, source_type=source_type, has_geom=False)
     if not records:
         raise DatastoreError("no rows returned")
 
@@ -497,22 +662,22 @@ def load_free_query(sql, name):
 def geometry_type(dataset_id, table, schema=None, source_type=None,
                   gateway_id=None):
     """
-    Return the table's real geometry type (e.g. 'MULTIPOLYGON', 'POINT') by
-    sampling one non-null row, or None on failure. The datastore columns are
-    declared as generic `geometry`, so this is the cheap way to learn the
-    actual shape for the tree icon — one small LIMIT 1 query.
+    Return the table's real geometry type (e.g. 'MULTIPOLYGON', 'POINT') from
+    one feature of /api/tables/{table}/features, or None on failure. The
+    datastore columns are declared as generic `geometry`, so this is the cheap
+    way to learn the actual shape for the tree icon.
+
+    dataset_id/schema/source_type/gateway_id are kept for call compatibility;
+    the features endpoint resolves the table by name alone.
     """
-    tbl = _qualified_table(table, schema)
-    sql = (f'SELECT {PG}.GeometryType({GEOM_COL}) AS t '  # nosec B608
-           f'FROM {tbl} WHERE {GEOM_COL} IS NOT NULL LIMIT 1')
     try:
-        result = run_sql(dataset_id, sql, gateway_id=gateway_id,
-                         source_type=source_type)
+        payload = api.fetch_json(_features_url(table, limit=1))
     except api.OverApiError:
         return None
-    records = result.get("records") if isinstance(result, dict) else result
-    if records:
-        return records[0].get("t")
+    for f in (payload or {}).get("features") or []:
+        t = (f.get("geometry") or {}).get("type")
+        if t:
+            return t.upper()
     return None
 
 

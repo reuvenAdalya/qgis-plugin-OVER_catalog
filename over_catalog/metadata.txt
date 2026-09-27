@@ -6,7 +6,7 @@ description=Browse and load the גרסאות לעם (OVER / over.org.il) catalog
 description[he]=דפדוף וטעינה של מאגרי פרויקט גרסאות לעם (over.org.il) — שכבות מרחביות, טבלאות ושאילתות חיות — ישירות ל-QGIS.
 about=OVER Catalog browses and loads the "גרסאות לעם" (OVER / over.org.il) version-tracking catalog of Israeli public datasets directly into QGIS: an OVER node in the Browser panel (source type -> organization -> dataset), a global search filter that reveals a dataset in the tree, whole-file GeoJSON/CSV loading, a live datastore layer filtered to the current map view, an advanced WHERE/SQL query builder with a field picker, and access to previous versions.
     "גרסאות לעם" היא מערכת שעוקבת אחרי שינויים במאגרי מידע ממשלתיים וציבוריים בישראל. המערכת החלה במעקב אחרי המאגרים הפתוחים באתר data.gov.il, וכיום היא מנטרת גם מקורות נוספים: מסד הנתונים של הכנסת, אתר הלשכה המרכזית לסטטיסטיקה (הלמ"ס), שכבות המידע המרחבי של GovMap, פרוטוקולי ועדות, מכרזים, החלטות ממשלה ועוד.
-version=1.4.3
+version=1.4.4
 author=Reuven Kost, Guy Zomer, Shai Sussman
 email=reuvenkost@gmail.com
 tracker=https://github.com/reuvenAdalya/qgis-plugin-OVER_catalog/issues
@@ -17,7 +17,8 @@ category=Web
 icon=icon.png
 experimental=False
 deprecated=False
-changelog=1.4.3 - Documentation refresh: the in-plugin help and the README now describe the three display modes, container files, the symbology behaviour (including that not every layer has a style) and the copy-server-location action.
+changelog=1.4.4 - Fixes "Host requires authentication" on the current-view layer. over.org.il now requires authentication for free SQL, so the current-view load, the whole-layer load and the geometry-type probe move to the public /api/tables/{table}/features GeoJSON endpoint (5000 features per page), and the info-table fallback to datastore_search. Only the advanced WHERE query and the free-SQL dialog still use SQL; when the server refuses them the message says so.
+    1.4.3 - Documentation refresh: the in-plugin help and the README now describe the three display modes, container files, the symbology behaviour (including that not every layer has a style) and the copy-server-location action.
     1.4.2 - Fixes symbology never being applied to raw file layers. QGIS's own browser provider handles a double-click on a layer item before any plugin sees it, so the plugin was never asked; the layer arrived unstyled. Styling now happens when the layer is added, which also covers drag-and-drop and "Add Selected Layers". A project being reopened keeps its own saved styling.
     1.4.1 - A symbology bundle that carries only GovMap's field dictionary (no SLD — GovMap has no style for every layer) now still applies the Hebrew field captions, instead of being discarded whole. The "loaded without symbology" note is limited to the case that actually warrants it: a style that exists but references an unpublished field.
     1.4.0 - Original GovMap symbology is now applied automatically when a layer loads: the dataset's _symbology bundle (SLD + SVG icons) is fetched, cached under the user profile, its relative icon paths rewritten to absolute ones, and the Hebrew field captions attached as field aliases. A style that filters on a field the data does not publish is skipped rather than applied, so the layer never renders blank. The right-click menu always offers the opposite of the setting (load with/without symbology).
