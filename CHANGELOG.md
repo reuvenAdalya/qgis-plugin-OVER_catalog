@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.1
+
+- **Each dataset now says which version it is serving and when.** The first item
+  under a dataset reads `🕒 גרסה 3 · 2026-07-31`, naming the active version and
+  the date it was detected; the tooltip adds the full timestamp and the row
+  count. Historical versions were already labelled with their dates under
+  "גרסאות קודמות", while the version actually in use was not, so there was no
+  way to tell how current the data was without opening the history.
+- The date comes from the same `/versions/latest` response the file leaves are
+  already built from, so it costs no extra request.
+
 ## 1.5.0
 
 - **ESRI `.lyr` styles are now applied, via SLYR.** Some datasets ship no SLD

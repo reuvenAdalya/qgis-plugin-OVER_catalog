@@ -624,6 +624,8 @@ class DatasetItem(QgsDataCollectionItem):
             version_error = exc
 
         if version is not None:
+            children.append(VersionInfoItem(
+                self, self.path() + "/version", version))
             items = api.resources_from_version(version)
             # The datastore layer carries the same attributes as the file, so
             # the dataset's symbology applies to it too — hand it over now that
@@ -637,7 +639,9 @@ class DatasetItem(QgsDataCollectionItem):
                     self, "גרסאות קודמות",
                     self.path() + "/history", self.dataset_id, title))
 
-        if not children:
+        # The version marker is a label, not content, so it must not make an
+        # otherwise-empty dataset look populated.
+        if not [c for c in children if not isinstance(c, VersionInfoItem)]:
             # No spatial leaf and no visible files. If this is a non-spatial
             # datastore-only dataset, surface its info-table fallback (also on
             # the right-click menu — see over_table_fallback); otherwise show
@@ -791,6 +795,41 @@ class DatastoreLayerItem(QgsDataItem):
             _notify(str(exc), Qgis.MessageLevel.Warning)
         except api.OverApiError as exc:
             _notify(f"שגיאת רשת: {exc}", Qgis.MessageLevel.Critical)
+
+
+# --------------------------------------------------------------------------
+# Active-version marker. The "גרסאות קודמות" nodes already name each historical
+# version with its date; the version actually being served had no such label, so
+# there was no way to see how current the data under a dataset is. The date comes
+# from the same /versions/latest payload the file leaves are built from, so this
+# costs no extra request.
+# --------------------------------------------------------------------------
+
+class VersionInfoItem(QgsDataItem):
+    """Informational leaf naming the active version and when it was detected."""
+
+    def __init__(self, parent, path, version):
+        number = version.get("version_number")
+        when = (version.get("detected_at") or "")[:10]
+        label = f"גרסה {number}" if number else "הגרסה הפעילה"
+        if when:
+            label = f"{label} · {when}"
+        super().__init__(Qgis.BrowserItemType.Custom, parent, f"🕒 {label}",
+                         path, PROVIDER_KEY)
+        self.setState(Qgis.BrowserItemState.Populated)
+        self.setIcon(QgsApplication.getThemeIcon("/mIconInfo.svg"))
+
+        rows = (version.get("change_summary") or {}).get("total_rows")
+        detected = version.get("detected_at") or "—"
+        tip = f"הגרסה הפעילה של המאגר\nזוהתה: {detected}"
+        if rows is not None:
+            tip += f"\nשורות: {rows}"
+        self.setToolTip(tip)
+
+    def sortKey(self):
+        # Sort above every sibling, including the Route B leaf (which uses
+        # "\t"), so it reads as a header for the dataset's contents.
+        return "\b"
 
 
 # --------------------------------------------------------------------------
