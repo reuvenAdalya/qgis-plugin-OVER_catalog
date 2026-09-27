@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.3
+
+- **Auxiliary files now follow the layers instead of leading them.** A symbology
+  bundle sorted on the name `_symbology`, and an underscore sorts below Hebrew,
+  so it appeared *above* the layers it belongs to. Files QGIS cannot open as a
+  layer — symbology bundles, PDFs, XML — now come after the loadable ones and
+  still before the history.
+- A dataset's children are ordered by five documented groups rather than by
+  whatever their names happened to be: the version marker, the live
+  "תצוגה נוכחית" leaf, the loadable files, the auxiliary files, and the history.
+  Each group still reads alphabetically inside itself, and the scheme replaces
+  the control-character sort keys 1.5.2 relied on.
+
 ## 1.5.2
 
 - **Fixed: "גרסאות קודמות" was only at the end of the list by luck.** The node
@@ -7,9 +20,6 @@
   last only for datasets whose title sorts before it (א, ב, ג) and jumped to the
   *top* of the file list for every title from ד onwards, which is most of them.
   It is now always last.
-- The ordering of a dataset's children is documented in one place, as three
-  named sort keys: the version marker first, the live "תצוגה נוכחית" leaf next,
-  then the file leaves under their own names, and the history last.
 
 ## 1.5.1
 

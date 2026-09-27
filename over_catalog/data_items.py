@@ -84,13 +84,18 @@ SETTINGS_AUTO_SYMBOLOGY = "over_catalog/auto_symbology"
 
 
 # Child ordering inside a dataset node. The browser proxy sorts siblings by
-# QgsDataItem.sortKey(), which defaults to the item's NAME — so anything needing
-# a fixed position must say so explicitly, or it drifts with the dataset's title.
-# The file leaves keep their names (so they group by dataset and read
-# alphabetically); these keys bracket that name range from both ends:
-SORT_VERSION_INFO = "\b"       # the active-version marker — first
-SORT_CURRENT_VIEW = "\t"       # the live "תצוגה נוכחית" leaf — next
-SORT_HISTORY = "\uffff"        # "גרסאות קודמות" — always last
+# QgsDataItem.sortKey(), which defaults to the item's NAME - so any item that
+# needs a fixed position must say so, or it drifts with the dataset's title.
+#
+# Every sibling therefore opens its key with a group digit, and the groups
+# holding more than one item append the name so they still read
+# alphabetically within the group. Digits sort below letters in any
+# collation, so the grouping always wins over the name:
+SORT_VERSION_INFO = "0"        # the active-version marker - first
+SORT_CURRENT_VIEW = "1"        # live datastore leaf / info-table fallback
+SORT_LAYER = "2"               # loadable files (+ name)
+SORT_OTHER = "3"               # files QGIS cannot open as a layer (+ name)
+SORT_HISTORY = "4"             # the previous-versions node - always last
 
 
 def display_mode():
@@ -398,6 +403,10 @@ class OverFileLayerItem(QgsLayerItem):
         # what actually styles the result (see the note above).
         register_symbology_uri(uri, self.sym_url)
 
+    def sortKey(self):
+        # Group with the other loadable files, alphabetical within the group.
+        return SORT_LAYER + self.name()
+
     # -- loading -----------------------------------------------------------
 
     def handleDoubleClick(self):
@@ -457,6 +466,10 @@ class ContainerFileItem(QgsDataCollectionItem):
         self.download_url = item.get("download_url") or ""
         self.sym_url = sym_url or ""
         self.setToolTip(self.download_url)
+
+    def sortKey(self):
+        # A container is a loadable file too - same group as the leaves.
+        return SORT_LAYER + self.name()
 
     def actions(self, parent):
         if not self.download_url:
@@ -863,6 +876,10 @@ class TableFallbackItem(QgsDataItem):
         self.rec = rec
         self.setToolTip("לחיצה כפולה טוענת את טבלת ה-datastore כטבלת מאפיינים")
 
+    def sortKey(self):
+        # It is this dataset's load action, like the datastore leaf.
+        return SORT_CURRENT_VIEW
+
     def handleDoubleClick(self):
         _load_table_fallback(self.rec)
         return True
@@ -1082,6 +1099,11 @@ class OtherFileItem(QgsDataItem):
         if warn:
             tip = "⚠ QGIS לא יודע לפתוח קובץ מסוג זה כשכבה.\n" + tip
         self.setToolTip(tip)
+
+    def sortKey(self):
+        # Auxiliary files (symbology bundles, PDFs, ...) are not layers, so
+        # they sit after the loadable ones but still above the history.
+        return SORT_OTHER + self.name()
 
     def handleDoubleClick(self):
         self._open()
