@@ -83,6 +83,16 @@ DISPLAY_MODE_DEFAULT = 2
 SETTINGS_AUTO_SYMBOLOGY = "over_catalog/auto_symbology"
 
 
+# Child ordering inside a dataset node. The browser proxy sorts siblings by
+# QgsDataItem.sortKey(), which defaults to the item's NAME — so anything needing
+# a fixed position must say so explicitly, or it drifts with the dataset's title.
+# The file leaves keep their names (so they group by dataset and read
+# alphabetically); these keys bracket that name range from both ends:
+SORT_VERSION_INFO = "\b"       # the active-version marker — first
+SORT_CURRENT_VIEW = "\t"       # the live "תצוגה נוכחית" leaf — next
+SORT_HISTORY = "\uffff"        # "גרסאות קודמות" — always last
+
+
 def display_mode():
     """Current tree display mode (1/2/3); defaults to 2 (all openable)."""
     try:
@@ -729,7 +739,7 @@ class DatastoreLayerItem(QgsDataItem):
         # the name). Return a low-codepoint key so this leaf sits at the TOP —
         # above the file leaves and the "גרסאות קודמות" node — instead of
         # being sorted to the bottom by its 🗺 emoji.
-        return "\t"
+        return SORT_CURRENT_VIEW
 
     def handleDoubleClick(self):
         # This leaf IS the "current view" entry, so it always filters by the
@@ -829,7 +839,7 @@ class VersionInfoItem(QgsDataItem):
     def sortKey(self):
         # Sort above every sibling, including the Route B leaf (which uses
         # "\t"), so it reads as a header for the dataset's contents.
-        return "\b"
+        return SORT_VERSION_INFO
 
 
 # --------------------------------------------------------------------------
@@ -876,6 +886,14 @@ class PreviousVersionsItem(QgsDataCollectionItem):
         super().__init__(parent, name, path, PROVIDER_KEY)
         self.dataset_id = dataset_id
         self.title = title
+
+    def sortKey(self):
+        # Without this the node sorts on its own name, so its position depended
+        # on the dataset's title: it landed last only for a title sorting before
+        # "גרסאות קודמות" (א-ב-ג) and jumped to the TOP of the file list for
+        # everything from ד onwards. The history belongs at the end regardless,
+        # so sort after every sibling.
+        return SORT_HISTORY
 
     def createChildren(self):
         try:
