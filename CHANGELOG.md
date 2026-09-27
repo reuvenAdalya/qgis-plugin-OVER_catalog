@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.5.0
+
+- **ESRI `.lyr` styles are now applied, via SLYR.** Some datasets ship no SLD
+  and instead zip an ArcGIS `.lyr` beside the shapefile it styles (for example
+  `BUS_TERMINAL_STRAT.zip`, which holds the `.shp` parts plus
+  `BUS_TERMINAL_STRAT.lyr`). When the **SLYR (Community Edition)** plugin is
+  installed, the `.lyr` is converted once, cached, and applied to every layer of
+  that dataset — the shapefile from the archive, the GeoJSON and the live
+  datastore layer alike. It also brings the **labelling**, which the SLD bundles
+  do not carry.
+- The conversion targets QML rather than QLR on purpose. A QLR carries the
+  layer's original data source, whose path routinely does not point at the
+  shapefile shipped beside it; a QML is style-only, so it is applied to the
+  layer already opened from the archive and there is no source to correct.
+- **Field-name case is reconciled.** A `.lyr` authored against a geodatabase
+  spells fields differently from the shapefile (`TERM_NAME` vs `term_name`),
+  which would have left the labels silently blank. References are mapped onto
+  each layer's own spelling, case-insensitively — and because two
+  representations of one dataset can spell a field differently, the mapping is
+  done per layer rather than baked into the cache.
+- **Without SLYR nothing breaks**: the layer loads unstyled and a one-time
+  message recommends installing SLYR. If SLYR is installed later, the cached
+  `.lyr` is converted on the next load without re-downloading it.
+- An SLD still wins when a dataset somehow has both, since it needs no
+  third-party plugin and therefore works for everyone.
+- A converted style that refers to a field the data does not publish is skipped
+  rather than applied — the same guard the SLD path already used.
+
 ## 1.4.4
 
 - **Fixed: "OVER: שגיאת רשת: Host requires authentication" on the current-view

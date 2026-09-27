@@ -298,12 +298,19 @@ def handle_layer_added(layer):
         _log(f"symbology hook failed: {exc}")
 
 
+# The SLYR recommendation is shown once per session, not once per layer: a
+# dataset's shapefile, GeoJSON and datastore layer would otherwise each raise it.
+_SLYR_HINT_SHOWN = False
+
+
 def _apply_symbology(layer, sym_url, name):
     """
-    Style a freshly loaded layer from the dataset's bundle. Only a genuine skip
-    (a style exists but would blank the layer) is reported — a dataset GovMap
-    simply has no style for is the common case and needs no message.
+    Style a freshly loaded layer from the dataset's bundle. Only two outcomes
+    are worth telling the user about: a style that would blank the layer, and an
+    ESRI style that needs the SLYR plugin. A dataset with no style at all is the
+    common case and needs no message.
     """
+    global _SLYR_HINT_SHOWN
     try:
         outcome = symbology.apply_to_layer(layer, sym_url)
     except Exception as exc:          # styling must never block the load
@@ -312,6 +319,12 @@ def _apply_symbology(layer, sym_url, name):
     if outcome == symbology.SKIPPED:
         _notify("השכבה נטענה ללא הסימבולוגיה המקורית — היא מסתמכת על שדה "
                 "שאינו נמסר בנתונים (ראה יומן ההודעות: OVER)",
+                Qgis.MessageLevel.Info)
+    elif outcome == symbology.NEEDS_SLYR and not _SLYR_HINT_SHOWN:
+        _SLYR_HINT_SHOWN = True
+        _notify("למאגר זה יש עיצוב מקורי בפורמט ESRI ‎(LYR)‎. כדי שהתוסף יוכל "
+                "להחיל אותו, התקינו את התוסף SLYR (Community Edition) מתוך "
+                "מנהל התוספים — לאחר מכן טענו את השכבה מחדש.",
                 Qgis.MessageLevel.Info)
 
 
