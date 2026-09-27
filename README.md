@@ -19,21 +19,29 @@ attribute tables, and live datastore queries.
 
 - **Browser tree** — an `OVER` node in the QGIS Browser panel:
   source type (govmap / data.gov.il / scraper) → organization → dataset.
+
 - **Original symbology, applied on load** — most datasets ship GovMap's own
   style (SLD + SVG icons); it is applied as the layer loads, along with the
   Hebrew field captions. On by default, and the right-click menu always offers
   the opposite.
+
 - **Three display modes** — spatial layers only / everything QGIS can open
   (default) / every file, with the non-openable ones marked `⚠`.
-- **Container files** — GPKG, GeoParquet and FlatGeobuf expand in the tree and
+
+- **Container files** — GPKG, GeoParquet, etc  expand in the tree and
   list their sublayers; each loads on its own.
+
 - **Search** — type a dataset name in the QGIS Locator (the search bar at the
   bottom of the window) to reveal it in the tree.
+
 - **Advanced SQL queries** — per-layer (WHERE + field picker) or database-wide
   (free-form SQL).
+
 - **Copy server location** — right-click any file to copy its raw URL for use
   in other tools.
+
 - **Load** — read-only, on demand.
+
 - **Settings & help** — Plugins → OVER Catalog → הגדרות...
 
 ## Data structure — the items under each dataset
@@ -105,7 +113,7 @@ ckan-version-tracker.
 
 ## Authors
 
-Reuven Kost, Guy Zomer, Shai Sussman.
+Reuven Kost, Guy Zomer.
 
 ## License
 
