@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.6.0
+
+- **Update a project's OVER layers to the latest version.** over.org.il keeps
+  every version of a file in one bucket folder and changes only the file name,
+  so a saved project stays on the version it was saved with — it keeps working
+  and quietly goes stale. On a real 12-layer project, four layers turned out to
+  be versions behind. Plugins → OVER Catalog → "עדכון שכבות OVER בפרויקט"
+  scans the project and shows, per layer, the version it is on, the latest one,
+  the row counts on either side, and whether the new version renamed any
+  fields. Nothing changes until the user ticks rows and confirms.
+- **The same engine as a Processing algorithm** ("Refresh OVER layers to their
+  latest version", in `scripts/`), so it works in Model Builder, batch mode,
+  `processing.run()` and scheduled triggers. Its report is a table output
+  rather than log text, so a model can act on it. Dry run is on by default.
+- **Only the data source changes.** Style, labels, opacity, blend mode, scale
+  visibility, custom properties, layer variables and the layer id are all kept
+  — the id in particular, so joins and project references keep working. The one
+  exception found by testing: QGIS clears a layer's filter on a source change,
+  so the filter is captured beforehand and re-applied, and reported if it no
+  longer applies.
+- **Renamed fields are flagged, not acted on.** The same dataset shipped
+  `התרעה`/`מרחב` in one version and `hatraha`/`merchav` in the next; a style
+  built on the old names survives the swap and then matches nothing. Rows whose
+  fields disappeared say so. Replacing the symbology stays a separate, per-row,
+  off-by-default choice — it overwrites manual styling.
+- Layers are listed with their full group path, and two layers of one dataset
+  appear as two rows, because they can be updated independently.
+
 ## 1.5.3
 
 - **Auxiliary files now follow the layers instead of leading them.** A symbology

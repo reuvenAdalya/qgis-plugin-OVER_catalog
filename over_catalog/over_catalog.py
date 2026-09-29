@@ -24,6 +24,7 @@ class OverCatalogPlugin:
         self.data_provider = None
         self.gui_provider = None
         self.settings_action = None
+        self.refresh_action = None
         # True while QGIS is reading a project: layers arrive with the styling
         # saved in that project, which must win over the catalog's symbology.
         self._reading_project = False
@@ -58,11 +59,23 @@ class OverCatalogPlugin:
         project.layerLoaded.connect(self._on_project_layer_loaded)
         project.readProject.connect(self._on_project_read)
 
+        # Project-wide action: bring this project's OVER layers up to date.
+        # It acts on the project rather than on a tree node, so it lives in the
+        # menu, not in the Browser's context menus.
+        self.refresh_action = QAction(
+            "עדכון שכבות OVER בפרויקט...", self.iface.mainWindow())
+        self.refresh_action.triggered.connect(self._open_refresh)
+        self.iface.addPluginToMenu(MENU_NAME, self.refresh_action)
+
         # Settings dialog entry, under Plugins -> OVER Catalog.
         self.settings_action = QAction(
             "הגדרות...", self.iface.mainWindow())
         self.settings_action.triggered.connect(self._open_settings)
         self.iface.addPluginToMenu(MENU_NAME, self.settings_action)
+
+    def _open_refresh(self):
+        from .refresh_dialog import RefreshDialog
+        RefreshDialog(self.iface.mainWindow()).exec()
 
     # -- symbology-on-load hooks -------------------------------------------
 
@@ -140,6 +153,10 @@ class OverCatalogPlugin:
                 self.data_provider
             )
             self.data_provider = None
+
+        if self.refresh_action is not None:
+            self.iface.removePluginMenu(MENU_NAME, self.refresh_action)
+            self.refresh_action = None
 
         if self.settings_action is not None:
             self.iface.removePluginMenu(MENU_NAME, self.settings_action)
