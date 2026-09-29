@@ -63,7 +63,7 @@ class OverCatalogPlugin:
         # It acts on the project rather than on a tree node, so it lives in the
         # menu, not in the Browser's context menus.
         self.refresh_action = QAction(
-            "עדכון שכבות OVER בפרויקט...", self.iface.mainWindow())
+            "עדכון גירסאות למאגרי OVER...", self.iface.mainWindow())
         self.refresh_action.triggered.connect(self._open_refresh)
         self.iface.addPluginToMenu(MENU_NAME, self.refresh_action)
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.2
+
+- The update tool is now called "עדכון גירסאות למאגרי OVER", in its window, its
+  progress dialog and the Plugins menu, and opens with a short line saying what
+  it is for: it finds the gap between the versions a project holds and the
+  latest ones, and updates whichever layers you choose.
+
 ## 1.6.1
 
 - **Fixed: the row counts read backwards.** In the right-to-left dialog,

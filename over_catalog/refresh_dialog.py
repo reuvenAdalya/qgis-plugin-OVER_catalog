@@ -28,6 +28,11 @@ from . import refresh
 COL_PICK, COL_LAYER, COL_VERSION, COL_ROWS, COL_SYM = range(5)
 HEADERS = ["", "שכבה", "גרסה", "שורות", "עדכון סימבולוגיה"]
 
+TITLE = "עדכון גירסאות למאגרי OVER"
+INTRO = ("כלי עזר לעדכון מאגרי OVER CATALOG לגירסתם האחרונה. "
+         "הכלי מזהה את הפערים ומאפשר עדכון מיידי לנתוני הגירסה האחרונה "
+         "עבור כל שכבה שבקובץ הפרויקט.")
+
 
 # Written as escapes, never as the characters themselves: a source file
 # holding raw bidirectional controls is the Trojan Source pattern, and
@@ -62,7 +67,7 @@ class RefreshDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("עדכון שכבות OVER")
+        self.setWindowTitle(TITLE)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.rows = []
         self._build_ui()
@@ -73,6 +78,11 @@ class RefreshDialog(QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
+
+        intro = QLabel(INTRO)
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color:#555; margin-bottom:4px;")
+        layout.addWidget(intro)
 
         head = QHBoxLayout()
         self.summary = QLabel("")
@@ -140,7 +150,7 @@ class RefreshDialog(QDialog):
         self.warn.setVisible(True)
 
         bar = QProgressDialog("סורק שכבות...", "בטל", 0, 100, self)
-        bar.setWindowTitle("עדכון שכבות OVER")
+        bar.setWindowTitle(TITLE)
         bar.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         bar.setMinimumDuration(0)
         bar.setValue(0)
