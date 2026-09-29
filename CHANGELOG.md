@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.1
+
+- **Fixed: the row counts read backwards.** In the right-to-left dialog,
+  `69 → 78` displayed as `78 → 69`. The version cell was fine because it opens
+  with a strong left-to-right letter (`v1`), which pins the run's direction,
+  while a cell opening with a digit inherits the dialog's direction and swaps
+  its two halves. Both cells are now wrapped in a directional isolate.
+- **The dialog says when the run has finished.** The per-row ticks reported
+  each layer, but nothing stated that the operation as a whole was done. A
+  status line now appears on completion — green when everything applied, amber
+  when some layers failed, red when none did — and it repeats the one thing
+  still outstanding: saving the project. The pre-flight warning about versions
+  being unrecoverable is hidden once the run is over, and comes back on rescan.
+
 ## 1.6.0
 
 - **Update a project's OVER layers to the latest version.** over.org.il keeps

@@ -29,14 +29,33 @@ COL_PICK, COL_LAYER, COL_VERSION, COL_ROWS, COL_SYM = range(5)
 HEADERS = ["", "שכבה", "גרסה", "שורות", "עדכון סימבולוגיה"]
 
 
+# Written as escapes, never as the characters themselves: a source file
+# holding raw bidirectional controls is the Trojan Source pattern, and
+# security scanners rightly reject it (bandit B613).
+_LRI = "\u2066"       # left-to-right isolate
+_PDI = "\u2069"       # pop directional isolate
+
+
+def _ltr(text):
+    """
+    Pin a value to left-to-right inside this RTL dialog.
+
+    "v1 → v3" happens to survive because it opens with a strong LTR letter, but
+    "69 → 78" opens with a digit — a weak character — so the paragraph's RTL
+    direction wins and the two numbers swap places on screen. Wrapping the run
+    in an isolate fixes the order without changing the text.
+    """
+    return f"{_LRI}{text}{_PDI}"
+
+
 def _fmt_rows(row):
     if row.old_rows is None and row.new_rows is None:
         return ""
     if row.status != refresh.UPDATE:
-        return f"{row.new_rows:,}" if row.new_rows is not None else ""
+        return _ltr(f"{row.new_rows:,}") if row.new_rows is not None else ""
     old = f"{row.old_rows:,}" if row.old_rows is not None else "?"
     new = f"{row.new_rows:,}" if row.new_rows is not None else "?"
-    return f"{old} → {new}"
+    return _ltr(f"{old} → {new}")
 
 
 class RefreshDialog(QDialog):
@@ -90,11 +109,19 @@ class RefreshDialog(QDialog):
         bulk.addStretch()
         layout.addLayout(bulk)
 
-        warn = QLabel("⚠ לא ניתן לשחזר את הגרסאות הקודמות. "
-                      "שמור עותק של הפרויקט לפני העדכון.")
-        warn.setWordWrap(True)
-        warn.setStyleSheet("color:#b00020;")
-        layout.addWidget(warn)
+        self.warn = QLabel("⚠ לא ניתן לשחזר את הגרסאות הקודמות. "
+                           "שמור עותק של הפרויקט לפני העדכון.")
+        self.warn.setWordWrap(True)
+        self.warn.setStyleSheet("color:#b00020;")
+        layout.addWidget(self.warn)
+
+        # Shown only once the run finishes — the per-row ticks say what
+        # happened to each layer, this says the operation as a whole is done
+        # and what still needs doing (saving the project).
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setVisible(False)
+        layout.addWidget(self.status)
 
         self.buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Close)
@@ -107,6 +134,11 @@ class RefreshDialog(QDialog):
     # -- scanning ----------------------------------------------------------
 
     def scan(self):
+        # A rescan starts a fresh run: drop the previous result and bring the
+        # pre-flight warning back.
+        self.status.setVisible(False)
+        self.warn.setVisible(True)
+
         bar = QProgressDialog("סורק שכבות...", "בטל", 0, 100, self)
         bar.setWindowTitle("עדכון שכבות OVER")
         bar.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
@@ -151,7 +183,7 @@ class RefreshDialog(QDialog):
             self.table.setItem(index, COL_LAYER, name)
 
             self.table.setItem(index, COL_VERSION,
-                               QTableWidgetItem(row.summary()))
+                               QTableWidgetItem(_ltr(row.summary())))
             self.table.setItem(index, COL_ROWS, QTableWidgetItem(_fmt_rows(row)))
 
             sym = QTableWidgetItem()
@@ -213,8 +245,9 @@ class RefreshDialog(QDialog):
         for row, with_sym in picked:
             ok, message = refresh.apply_update(row, with_symbology=with_sym)
             index = self.rows.index(row)
-            self.table.setItem(index, COL_VERSION,
-                               QTableWidgetItem(("✓ " if ok else "✗ ") + message))
+            self.table.setItem(
+                index, COL_VERSION,
+                QTableWidgetItem(("✓ " if ok else "✗ ") + _ltr(message)))
             self.table.item(index, COL_PICK).setCheckState(
                 Qt.CheckState.Unchecked)
             self.table.item(index, COL_PICK).setFlags(Qt.ItemFlag.NoItemFlags)
@@ -222,7 +255,22 @@ class RefreshDialog(QDialog):
             done += 1 if ok else 0
             failed += 0 if ok else 1
         self.table.resizeRowsToContents()
-        self.summary.setText(
-            f"{done} עודכנו" + (f", {failed} נכשלו" if failed else "")
-            + " · שמור את הפרויקט כדי לשמר את השינוי")
+        self.summary.setText(f"{len(self.rows)} שכבות מ-OVER")
+
+        if failed and not done:
+            text = f"✗ העדכון נכשל · {failed} שכבות לא עודכנו"
+            style = "color:#b00020; font-weight:bold;"
+        elif failed:
+            text = (f"✓ הסתיים · {done} שכבות עודכנו, {failed} נכשלו — "
+                    f"שמור את הפרויקט כדי לשמר את השינוי")
+            style = "color:#8a6d00; font-weight:bold;"
+        else:
+            text = (f"✓ הסתיים בהצלחה · {done} שכבות עודכנו — "
+                    f"שמור את הפרויקט כדי לשמר את השינוי")
+            style = "color:#0a7a3d; font-weight:bold;"
+        self.status.setText(text)
+        self.status.setStyleSheet(style)
+        self.status.setVisible(True)
+        # The pre-flight warning has done its job once the run is over.
+        self.warn.setVisible(False)
         self._refresh_button()
