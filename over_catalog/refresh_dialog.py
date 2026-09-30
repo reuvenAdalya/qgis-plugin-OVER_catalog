@@ -55,15 +55,20 @@ def _ltr(text):
 
 def _fmt_version(row):
     """
-    "v2 → v3" over the date of the version being moved TO — the same
-    "version · date" shape the tree uses for historical versions, so the same
-    fact reads the same way in both places. Each line is isolated separately:
-    a date opens with a digit and would otherwise be reordered by the dialog's
-    right-to-left direction.
+    "v2 → v3" over "2026-07-11 → 2026-07-31": both dates in full, on the same
+    from→to shape as the versions above them. How old the data in use is — the
+    gap between the two — is the point of the column, and it cannot be read
+    from the target date alone.
+
+    Each line is isolated separately: a date opens with a digit and would
+    otherwise be reordered by the dialog's right-to-left direction.
     """
     head = _ltr(row.summary())
-    date = row.detected_at if row.status == refresh.UPDATE else row.old_detected
-    return f"{head}\n{_ltr(date)}" if date else head
+    if row.status == refresh.UPDATE and row.old_detected and row.detected_at:
+        dates = f"{row.old_detected} → {row.detected_at}"
+    else:
+        dates = row.old_detected or row.detected_at
+    return f"{head}\n{_ltr(dates)}" if dates else head
 
 
 def _version_tooltip(row):
@@ -95,7 +100,9 @@ class RefreshDialog(QDialog):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.rows = []
         self._build_ui()
-        self.resize(820, 520)
+        # Wide enough that the version column can show both dates in full
+        # without the layer column, which stretches, being squeezed.
+        self.resize(1000, 520)
         self.scan()
 
     # -- ui ----------------------------------------------------------------

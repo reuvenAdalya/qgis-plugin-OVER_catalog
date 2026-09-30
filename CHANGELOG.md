@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.4
+
+- **Both version dates are shown in full**, on the same from→to shape as the
+  versions above them: `v2 → v3` over `2026-07-11 → 2026-07-31`. How stale the
+  data in use is — the gap between the two — is the point of the column, and
+  1.6.3 only showed the date being moved to, leaving that gap in a tooltip. The
+  dialog opens wider to fit them without squeezing the layer column.
+
 ## 1.6.3
 
 - **The version column carries its date.** It now reads `v2 → v3` over
