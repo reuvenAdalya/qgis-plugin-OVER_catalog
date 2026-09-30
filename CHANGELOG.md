@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.6
+
+- **Fixed: ticking a row by hand left the update button greyed out.** The
+  button was only ever wired to the bulk "select all" toggle, never to the
+  table itself, so any selection made row by row was invisible to it — after
+  unticking "select all" the button stayed disabled no matter how many rows
+  were then ticked. It now follows the table, and its count tracks every
+  change.
+- The bulk toggles say what unticking them does: "בחר הכל / בטל הכל" and
+  "עדכון סימבולוגיה לכולן / בטל הכל".
+
 ## 1.6.5
 
 - **The version column is one line, each version carrying its own date:**

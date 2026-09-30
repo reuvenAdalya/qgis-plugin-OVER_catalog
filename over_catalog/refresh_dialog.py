@@ -104,6 +104,9 @@ class RefreshDialog(QDialog):
         self.setWindowTitle(TITLE)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.rows = []
+        # Set while the table is being filled or bulk-toggled, so the hundreds
+        # of itemChanged signals that causes don't each recompute the footer.
+        self._updating = False
         self._build_ui()
         # Wide enough that the version column can show both dates in full
         # without the layer column, which stretches, being squeezed.
@@ -136,6 +139,9 @@ class RefreshDialog(QDialog):
         self.table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers)
         header = self.table.horizontalHeader()
+        # Without this the button only ever tracked the bulk toggles, so
+        # ticking a single row left it greyed out and unusable.
+        self.table.itemChanged.connect(self._on_item_changed)
         header.setSectionResizeMode(COL_LAYER, QHeaderView.ResizeMode.Stretch)
         for col in (COL_PICK, COL_VERSION, COL_ROWS, COL_SYM):
             header.setSectionResizeMode(
@@ -143,10 +149,10 @@ class RefreshDialog(QDialog):
         layout.addWidget(self.table)
 
         bulk = QHBoxLayout()
-        self.chk_all = QCheckBox("בחר הכל")
+        self.chk_all = QCheckBox("בחר הכל / בטל הכל")
         self.chk_all.stateChanged.connect(self._toggle_all)
         bulk.addWidget(self.chk_all)
-        self.chk_all_sym = QCheckBox("עדכון סימבולוגיה לכולן")
+        self.chk_all_sym = QCheckBox("עדכון סימבולוגיה לכולן / בטל הכל")
         self.chk_all_sym.stateChanged.connect(self._toggle_all_sym)
         bulk.addWidget(self.chk_all_sym)
         note = QLabel("⚠ עדכון סימבולוגיה מוחק עיצוב ידני")
@@ -206,6 +212,14 @@ class RefreshDialog(QDialog):
         self._fill()
 
     def _fill(self):
+        self._updating = True
+        try:
+            self._fill_rows()
+        finally:
+            self._updating = False
+        self._refresh_button()
+
+    def _fill_rows(self):
         self.table.setRowCount(len(self.rows))
         updatable = 0
         for index, row in enumerate(self.rows):
@@ -248,24 +262,37 @@ class RefreshDialog(QDialog):
         total = len(self.rows)
         self.summary.setText(
             f"{total} שכבות מ-OVER · {updatable} עם גרסה חדשה")
-        self._refresh_button()
 
     # -- interaction -------------------------------------------------------
 
+    def _on_item_changed(self, item):
+        if not self._updating and item.column() == COL_PICK:
+            self._refresh_button()
+
     def _toggle_all(self, state):
         want = Qt.CheckState(state) == Qt.CheckState.Checked
-        for index, row in enumerate(self.rows):
-            if row.selectable:
-                self.table.item(index, COL_PICK).setCheckState(
-                    Qt.CheckState.Checked if want else Qt.CheckState.Unchecked)
+        self._updating = True
+        try:
+            for index, row in enumerate(self.rows):
+                if row.selectable:
+                    self.table.item(index, COL_PICK).setCheckState(
+                        Qt.CheckState.Checked if want
+                        else Qt.CheckState.Unchecked)
+        finally:
+            self._updating = False
         self._refresh_button()
 
     def _toggle_all_sym(self, state):
         want = Qt.CheckState(state) == Qt.CheckState.Checked
-        for index, row in enumerate(self.rows):
-            if row.selectable and row.sym_url:
-                self.table.item(index, COL_SYM).setCheckState(
-                    Qt.CheckState.Checked if want else Qt.CheckState.Unchecked)
+        self._updating = True
+        try:
+            for index, row in enumerate(self.rows):
+                if row.selectable and row.sym_url:
+                    self.table.item(index, COL_SYM).setCheckState(
+                        Qt.CheckState.Checked if want
+                        else Qt.CheckState.Unchecked)
+        finally:
+            self._updating = False
 
     def _picked(self):
         out = []
@@ -289,6 +316,7 @@ class RefreshDialog(QDialog):
         if not picked:
             return
         done = failed = 0
+        self._updating = True
         for row, with_sym in picked:
             ok, message = refresh.apply_update(row, with_symbology=with_sym)
             index = self.rows.index(row)
@@ -301,6 +329,7 @@ class RefreshDialog(QDialog):
             row.status = refresh.CURRENT if ok else refresh.ERROR
             done += 1 if ok else 0
             failed += 0 if ok else 1
+        self._updating = False
         self.table.resizeRowsToContents()
         self.summary.setText(f"{len(self.rows)} שכבות מ-OVER")
 
