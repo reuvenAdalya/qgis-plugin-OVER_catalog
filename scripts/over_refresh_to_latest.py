@@ -106,8 +106,8 @@ class OverRefreshToLatest(QgsProcessingAlgorithm):
 
         fields = QgsFields()
         for name in ("layer", "dataset", "status", "from_version",
-                     "to_version", "detected", "rows_before", "rows_after",
-                     "renamed_fields", "result"):
+                     "from_detected", "to_version", "to_detected",
+                     "rows_before", "rows_after", "renamed_fields", "result"):
             fields.append(_string_field(name))
         sink, dest = self.parameterAsSink(
             parameters, self.OUTPUT, context, fields,
@@ -154,8 +154,8 @@ class OverRefreshToLatest(QgsProcessingAlgorithm):
                 feat = QgsFeature(fields)
                 feat.setAttributes([
                     row.path, row.dataset_id, row.status,
-                    str(row.old_version or ""), str(row.new_version or ""),
-                    row.detected_at,
+                    str(row.old_version or ""), row.old_detected,
+                    str(row.new_version or ""), row.detected_at,
                     str(row.old_rows if row.old_rows is not None else ""),
                     str(row.new_rows if row.new_rows is not None else ""),
                     ", ".join(row.missing_fields), result,

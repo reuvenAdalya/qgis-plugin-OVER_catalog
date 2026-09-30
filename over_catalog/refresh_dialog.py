@@ -53,6 +53,30 @@ def _ltr(text):
     return f"{_LRI}{text}{_PDI}"
 
 
+def _fmt_version(row):
+    """
+    "v2 → v3" over the date of the version being moved TO — the same
+    "version · date" shape the tree uses for historical versions, so the same
+    fact reads the same way in both places. Each line is isolated separately:
+    a date opens with a digit and would otherwise be reordered by the dialog's
+    right-to-left direction.
+    """
+    head = _ltr(row.summary())
+    date = row.detected_at if row.status == refresh.UPDATE else row.old_detected
+    return f"{head}\n{_ltr(date)}" if date else head
+
+
+def _version_tooltip(row):
+    parts = []
+    if row.old_version:
+        parts.append(f"בשימוש: גרסה {row.old_version}"
+                     + (f" · {row.old_detected}" if row.old_detected else ""))
+    if row.new_version:
+        parts.append(f"אחרונה: גרסה {row.new_version}"
+                     + (f" · {row.detected_at}" if row.detected_at else ""))
+    return "\n".join(parts)
+
+
 def _fmt_rows(row):
     if row.old_rows is None and row.new_rows is None:
         return ""
@@ -192,8 +216,9 @@ class RefreshDialog(QDialog):
             name.setToolTip(row.layer.source())
             self.table.setItem(index, COL_LAYER, name)
 
-            self.table.setItem(index, COL_VERSION,
-                               QTableWidgetItem(_ltr(row.summary())))
+            version = QTableWidgetItem(_fmt_version(row))
+            version.setToolTip(_version_tooltip(row))
+            self.table.setItem(index, COL_VERSION, version)
             self.table.setItem(index, COL_ROWS, QTableWidgetItem(_fmt_rows(row)))
 
             sym = QTableWidgetItem()

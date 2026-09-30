@@ -104,7 +104,8 @@ class LayerUpdate:
         self.new_file = None
         self.old_version = None
         self.new_version = None
-        self.detected_at = ""
+        self.detected_at = ""        # when the LATEST version was detected
+        self.old_detected = ""       # when the version in use was detected
         self.old_rows = None
         self.new_rows = None
         self.status = ERROR
@@ -227,6 +228,7 @@ def scan(project=None, check_schema=True, progress=None):
             if any(name == old_file for name, _ in _files_of(version).values()):
                 row.old_version = version.get("version_number")
                 row.old_rows = _rows_of(version)
+                row.old_detected = (version.get("detected_at") or "")[:10]
                 break
 
         newest = _files_of(latest).get(suffix)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.3
+
+- **The version column carries its date.** It now reads `v2 → v3` over
+  `2026-07-31` — the same "version · date" shape the Browser tree already uses
+  for historical versions, so the same fact reads the same way in both places.
+  A row that is up to date shows the date of the version it is on.
+- Hovering the cell gives both sides in full ("in use: version 2 · 2026-07-11 /
+  latest: version 3 · 2026-07-31"), which is what tells you how old the data
+  actually is — the column alone only says what it would move to.
+- The Processing report splits `detected` into `from_detected` and
+  `to_detected` to match.
+
 ## 1.6.2
 
 - The update tool is now called "עדכון גירסאות למאגרי OVER", in its window, its
