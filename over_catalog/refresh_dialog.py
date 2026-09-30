@@ -53,22 +53,27 @@ def _ltr(text):
     return f"{_LRI}{text}{_PDI}"
 
 
+def _side(version, date):
+    """One side of the column: 'v2: 2026-07-11', or just 'v2' with no date."""
+    if not version:
+        return ""
+    return f"v{version}: {date}" if date else f"v{version}"
+
+
 def _fmt_version(row):
     """
-    "v2 → v3" over "2026-07-11 → 2026-07-31": both dates in full, on the same
-    from→to shape as the versions above them. How old the data in use is — the
-    gap between the two — is the point of the column, and it cannot be read
-    from the target date alone.
+    "v2: 2026-07-11 → v3: 2026-07-31" — one line, each version carrying its own
+    date, so how stale the data in use is reads directly off the cell instead
+    of having to be inferred from a second row of bare dates.
 
-    Each line is isolated separately: a date opens with a digit and would
-    otherwise be reordered by the dialog's right-to-left direction.
+    Isolated as a whole: it opens with a strong left-to-right letter, but the
+    isolate keeps it ordered regardless of what is put in front of it later.
     """
-    head = _ltr(row.summary())
-    if row.status == refresh.UPDATE and row.old_detected and row.detected_at:
-        dates = f"{row.old_detected} → {row.detected_at}"
-    else:
-        dates = row.old_detected or row.detected_at
-    return f"{head}\n{_ltr(dates)}" if dates else head
+    old = _side(row.old_version, row.old_detected)
+    new = _side(row.new_version, row.detected_at)
+    if row.status == refresh.UPDATE and old and new:
+        return _ltr(f"{old} → {new}")
+    return _ltr(old or new or row.summary())
 
 
 def _version_tooltip(row):

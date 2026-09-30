@@ -6,7 +6,7 @@ description=Browse and load the גרסאות לעם (OVER / over.org.il) catalog
 description[he]=דפדוף וטעינה של מאגרי פרויקט גרסאות לעם (over.org.il) — שכבות מרחביות, טבלאות ושאילתות חיות — ישירות ל-QGIS.
 about=OVER Catalog browses and loads the "גרסאות לעם" (OVER / over.org.il) version-tracking catalog of Israeli public datasets directly into QGIS: an OVER node in the Browser panel (source type -> organization -> dataset), a global search filter that reveals a dataset in the tree, whole-file GeoJSON/CSV loading, a live datastore layer filtered to the current map view, an advanced WHERE/SQL query builder with a field picker, and access to previous versions.
     "גרסאות לעם" היא מערכת שעוקבת אחרי שינויים במאגרי מידע ממשלתיים וציבוריים בישראל. המערכת החלה במעקב אחרי המאגרים הפתוחים באתר data.gov.il, וכיום היא מנטרת גם מקורות נוספים: מסד הנתונים של הכנסת, אתר הלשכה המרכזית לסטטיסטיקה (הלמ"ס), שכבות המידע המרחבי של GovMap, פרוטוקולי ועדות, מכרזים, החלטות ממשלה ועוד.
-version=1.6.4
+version=1.6.5
 author=Reuven Kost, Guy Zomer, Shai Sussman
 email=reuvenkost@gmail.com
 tracker=https://github.com/reuvenAdalya/qgis-plugin-OVER_catalog/issues
@@ -17,7 +17,8 @@ category=Web
 icon=icon.png
 experimental=False
 deprecated=False
-changelog=1.6.4 - Both version dates are now shown in full in the update dialog, on the same from-to shape as the versions above them. How stale the data in use is - the gap between the two dates - is the point of the column, and 1.6.3 showed only the date being moved to. The dialog opens wider so they fit without squeezing the layer column.
+changelog=1.6.5 - The version column in the update dialog is now a single line with each version carrying its own date (v2: 2026-07-11 to v3: 2026-07-31), instead of bare dates stacked under bare versions that the reader had to pair up by position.
+    1.6.4 - Both version dates are now shown in full in the update dialog, on the same from-to shape as the versions above them. How stale the data in use is - the gap between the two dates - is the point of the column, and 1.6.3 showed only the date being moved to. The dialog opens wider so they fit without squeezing the layer column.
     1.6.3 - The version column in the update dialog now carries its date, reading 'v2 to v3' over the date the newer version was detected - the same version-and-date shape the Browser tree uses for historical versions. Hovering shows both sides in full, which is what tells you how old the data in use actually is. The Processing report splits its detected column into from_detected and to_detected to match.
     1.6.2 - The update tool is renamed to 'update versions for OVER datasets' in its window, progress dialog and menu entry, and opens with a short line explaining what it does: it finds the gap between the versions a project holds and the latest ones, and updates whichever layers you choose.
     1.6.1 - Fixes the row counts reading backwards in the right-to-left update dialog (a cell starting with a digit inherited the dialog's direction and swapped its halves; both numeric cells are now wrapped in a directional isolate). The dialog also states when the run has finished - green when everything applied, amber on partial failure, red when nothing did - and repeats that the project still needs saving.

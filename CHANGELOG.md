@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.5
+
+- **The version column is one line, each version carrying its own date:**
+  `v2: 2026-07-11 → v3: 2026-07-31`. 1.6.4 stacked bare dates under bare
+  versions, which left the reader pairing them by position; this way each date
+  is attached to the version it belongs to, and the rows stay one line tall.
+
 ## 1.6.4
 
 - **Both version dates are shown in full**, on the same from→to shape as the
